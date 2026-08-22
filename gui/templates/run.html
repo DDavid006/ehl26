@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}{{ run.idea.title }}{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <p class="muted"><a href="{{ url_for('index') }}">&larr; all runs</a></p>
+  <h1>{{ run.idea.title }}</h1>
+  <p>
+    <span class="badge {{ run.status }}" id="status-badge">{{ run.status }}</span>
+    <span class="muted">{{ status_labels[run.status] }}</span>
+  </p>
+  {% if run.error %}<p class="flash error">{{ run.error }}</p>{% endif %}
+
+  <h3>Field</h3>
+  <p>{{ run.idea.field_of_art or 'not specified' }}</p>
+  <h3>Description</h3>
+  <p>{{ run.idea.description }}</p>
+  <h3>Features</h3>
+  <ul>{% for feature in run.idea.features %}<li>{{ feature }}</li>{% endfor %}</ul>
+  <p class="muted">Generated workflow: <code>{{ workflow_path }}</code>
+    {% if run.workflow_run_id %} &middot; workflow run <code>{{ run.workflow_run_id }}</code>{% endif %}
+  </p>
+</section>
+
+<section class="panel" id="rounds">
+  <h2>Clearance rounds</h2>
+  {% if run.rounds %}
+    {% for round in run.rounds %}
+    <article class="round">
+      <h3>Round {{ loop.index }} &middot; <span class="badge {{ 'drafted' if round.verdict == 'clear' else 'blocked' }}">{{ round.verdict }}</span></h3>
+      {% if round.blocking_references %}
+        <h4>Blocking references</h4>
+        <ul>{% for ref in round.blocking_references %}<li>{{ ref }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if round.infringing_features %}
+        <h4>Features that read on a live claim</h4>
+        <ul>{% for item in round.infringing_features %}<li>{{ item }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if round.novelty_gaps %}
+        <h4>Novelty gaps</h4>
+        <ul>{% for item in round.novelty_gaps %}<li>{{ item }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if round.reasoning %}<h4>Reasoning</h4><p>{{ round.reasoning }}</p>{% endif %}
+      {% if round.redesign %}
+        <h4>Redesign</h4>
+        {% if round.redesign.removed_or_changed %}
+          <p class="muted">Changed or removed</p>
+          <ul>{% for item in round.redesign.removed_or_changed %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if round.redesign.added %}
+          <p class="muted">Added</p>
+          <ul>{% for item in round.redesign.added %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if round.redesign.plausibility %}<p>{{ round.redesign.plausibility }}</p>{% endif %}
+      {% endif %}
+    </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No rounds recorded yet.</p>
+  {% endif %}
+</section>
+
+{% if run.draft %}
+<section class="panel">
+  <h2>Drafted application</h2>
+  <p>Branch <code>{{ run.draft.branch }}</code> &middot; file <code>{{ run.draft.path }}</code>
+     &middot; {{ run.draft.claim_count }} claims</p>
+  {% if run.draft.independent_claim %}
+    <h3>Independent claim</h3>
+    <blockquote>{{ run.draft.independent_claim }}</blockquote>
+  {% endif %}
+  {% if run.draft.summary %}<p>{{ run.draft.summary }}</p>{% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Progress log</h2>
+  <pre id="log">{{ log|join('\n') }}</pre>
+</section>
+
+<script>
+  const terminal = ["drafted", "blocked", "failed"];
+  async function poll() {
+    const response = await fetch(window.location.pathname + "/state");
+    if (!response.ok) return;
+    const state = await response.json();
+    const badge = document.getElementById("status-badge");
+    if (badge.textContent !== state.status) { window.location.reload(); return; }
+    document.getElementById("log").textContent = state.log.join("\n");
+    if (!terminal.includes(state.status)) setTimeout(poll, 5000);
+  }
+  if (!terminal.includes(document.getElementById("status-badge").textContent)) {
+    setTimeout(poll, 5000);
+  }
+</script>
+{% endblock %}
