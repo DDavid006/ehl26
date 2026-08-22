@@ -3,6 +3,8 @@
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
+from pathlib import Path
+from threading import Lock
 
 from . import AUTONOMOUS_INSTRUCTION
 from ..errors import EvidenceFailure
@@ -99,9 +101,35 @@ class PatentSearchAgent:
 
     def run(self, idea_text: str, extracted: dict, *, iteration: int, run_dir) -> dict:
         keywords = [keyword for element in extracted["elements"] for keyword in element.get("keywords", [])]
+        source_log_lock = Lock()
+        source_errors = []
+
+        def record_source_error(error: dict) -> None:
+            source_errors.append(error)
+            with source_log_lock:
+                directory = Path(run_dir)
+                directory.mkdir(parents=True, exist_ok=True)
+                with (directory / "run.log").open("a") as log:
+                    log.write(
+                        "patent source failure: "
+                        f"{error['source']}: {error['error']}\n"
+                    )
+
+        def search_source(source, query):
+            source_name = getattr(source, "name", type(source).__name__)
+            try:
+                return source.search(
+                    query, iteration=iteration, run_dir=run_dir
+                ) or []
+            except Exception as exc:
+                record_source_error(
+                    {"source": source_name, "query": query, "error": str(exc)}
+                )
+                return []
+
         hits = []
         for source in self.sources:
-            hits.extend(source.search(keywords, iteration=iteration, run_dir=run_dir))
+            hits.extend(search_source(source, keywords))
         if not hits:
             broadened = []
             for element in extracted["elements"]:
@@ -111,7 +139,7 @@ class PatentSearchAgent:
                         broadened.append(term)
             for source in self.sources:
                 for term in broadened:
-                    hits.extend(source.search([term], iteration=iteration, run_dir=run_dir))
+                    hits.extend(search_source(source, [term]))
         unique_hits = {}
         for hit in hits:
             identifier = hit.get("id") or hit.get("patent_number") or hit.get("url")
@@ -119,11 +147,27 @@ class PatentSearchAgent:
                 unique_hits[identifier] = hit
         hits = list(unique_hits.values())
         if not hits and self.allow_devin_search:
-            hits = self._devin_search(idea_text, keywords)
+            try:
+                hits = self._devin_search(idea_text, keywords)
+            except Exception as exc:
+                record_source_error(
+                    {
+                        "source": "devin_patent_search",
+                        "query": keywords,
+                        "error": str(exc),
+                    }
+                )
+                hits = []
         if not hits:
+            error_suffix = ""
+            if source_errors:
+                error_suffix = "; source errors: " + "; ".join(
+                    f"{item['source']}: {item['error']}" for item in source_errors
+                )
             raise EvidenceFailure(
-                "Patent search returned no records after broadened queries",
-                {"patents_examined": 0},
+                "Patent search returned no records after broadened queries"
+                + error_suffix,
+                {"patents_examined": 0, "source_errors": source_errors},
             )
         vectors, embed_path = self.llm.embed(
             [idea_text] + [f"{item.get('claims', '')} {item.get('abstract', '')}" for item in hits],
@@ -198,5 +242,6 @@ class PatentSearchAgent:
             "overlap_score": overlap_score(kept),
             "runner_up": kept[1] if len(kept) > 1 else None,
             "patents_examined": len(kept),
+            "source_errors": source_errors,
             "llm_paths": llm_paths,
         }

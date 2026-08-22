@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import math
 import json
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 
 from . import AUTONOMOUS_INSTRUCTION
 from ..errors import EvidenceFailure
@@ -41,17 +43,42 @@ class ResearchAgent:
         self.llm, self.sources = llm, sources
 
     def run(self, extracted: dict, *, iteration: int, run_dir) -> dict:
+        source_log_lock = Lock()
+        source_errors = []
+
+        def record_source_error(error: dict) -> None:
+            source_errors.append(error)
+            with source_log_lock:
+                directory = Path(run_dir)
+                directory.mkdir(parents=True, exist_ok=True)
+                with (directory / "run.log").open("a") as log:
+                    log.write(
+                        "research source failure: "
+                        f"{error['source']}: {error['error']}\n"
+                    )
+
         def search_element(element):
             query = " ".join(element.get("keywords") or [element["text"]])
             documents = []
             for source in self.sources:
-                documents.extend(
-                    document
-                    for document in (
-                        source.search(query, iteration=iteration, run_dir=run_dir) or []
+                source_name = getattr(source, "name", type(source).__name__)
+                try:
+                    found = source.search(
+                        query, iteration=iteration, run_dir=run_dir
+                    ) or []
+                    documents.extend(
+                        document
+                        for document in found
+                        if isinstance(document, dict) and document.get("abstract")
                     )
-                    if document.get("abstract")
-                )
+                except Exception as exc:
+                    record_source_error(
+                        {
+                            "element_id": element["id"],
+                            "source": source_name,
+                            "error": str(exc),
+                        }
+                    )
             return element["id"], documents
 
         documents_by_element = {}
@@ -93,10 +120,17 @@ class ResearchAgent:
                 "unverified_elements": unverified_elements,
                 "verified_elements": verified_count,
                 "required_verified_elements": required,
+                "source_errors": source_errors,
             }
+            error_suffix = ""
+            if source_errors:
+                error_suffix = "; source errors: " + "; ".join(
+                    f"{item['source']}: {item['error']}" for item in source_errors
+                )
             raise EvidenceFailure(
                 "Insufficient literature evidence to calculate novelty: "
-                f"{verified_count} of {len(extracted['elements'])} elements verified",
+                f"{verified_count} of {len(extracted['elements'])} elements verified"
+                + error_suffix,
                 details,
             )
         rationale = self.llm.chat(
@@ -133,6 +167,7 @@ class ResearchAgent:
             "documents_retrieved": documents_retrieved,
             "unverified_elements": unverified_elements,
             "verified_elements": len(element_scores),
+            "source_errors": source_errors,
             "closest_publications": closest[:10],
             "rationale": rationale.get("rationale", ""),
             "cited_ids": cited_ids,

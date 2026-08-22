@@ -79,7 +79,6 @@ class PatentLoop:
             if settings.epo_key and settings.epo_secret:
                 patent_sources.append(EPOOPSSource(settings.epo_key, settings.epo_secret, session))
             literature_sources = literature
-            patent_sources = patent_sources
             allow_devin_search = not bool(settings.uspto_api_key)
         self.literature_sources = literature_sources or []
         self.patent_sources = patent_sources or []
@@ -160,6 +159,7 @@ class PatentLoop:
                     {
                         "iteration": iteration,
                         **details,
+                        "source_errors": details.get("source_errors", []),
                         "gate_decision": "infrastructure_failure",
                         "termination_reason": termination_reason,
                     }
@@ -196,6 +196,10 @@ class PatentLoop:
                 "novelty_score": research["novelty_score"],
                 "element_scores": research.get("element_scores", {}),
                 "unverified_elements": research.get("unverified_elements", []),
+                "source_errors": (
+                    research.get("source_errors", [])
+                    + patents.get("source_errors", [])
+                ),
                 "overlap_score": patents["overlap_score"],
                 "patents_examined": patents.get("patents_examined", 0),
                 "top_blocking_patent": top_blocking,

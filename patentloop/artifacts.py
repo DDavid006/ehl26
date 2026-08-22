@@ -79,6 +79,13 @@ class ArtifactWriter:
             lines.append(
                 f"  - patents examined: {item.get('patents_examined', '—')}"
             )
+            if item.get("source_errors"):
+                lines.append("  - source errors:")
+                lines.extend(
+                    f"    - {error.get('source', 'unknown')}: "
+                    f"{error.get('error', '')}"
+                    for error in item["source_errors"]
+                )
             blocking = item.get("top_blocking_patent")
             if blocking:
                 lines.append(

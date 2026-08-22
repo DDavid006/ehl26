@@ -238,6 +238,20 @@ class LiteratureSource:
         return []
 
 
+class RaisingSource:
+    name = "flaky-literature"
+
+    def search(self, query, **kwargs):
+        raise RuntimeError("429 Too Many Requests")
+
+
+class HealthyLiteratureSource:
+    name = "healthy-literature"
+
+    def search(self, query, **kwargs):
+        return [{"id": query, "title": query, "abstract": "evidence"}]
+
+
 class ResearchLLM(StubLLM):
     def chat(self, prompt, schema, **kwargs):
         return {"rationale": "supported", "cited_ids": ["one", "two"]}
@@ -257,6 +271,24 @@ def test_research_records_unverified_elements_without_scoring_them(tmp_path):
     assert result["unverified_elements"] == ["e3"]
     assert result["verified_elements"] == 2
     assert set(result["element_scores"]) == {"e1", "e2"}
+
+
+def test_research_isolates_source_failure_and_keeps_healthy_results(tmp_path):
+    extracted = {
+        "elements": [
+            {"id": "e1", "text": "one", "keywords": ["one"]},
+            {"id": "e2", "text": "two", "keywords": ["two"]},
+            {"id": "e3", "text": "three", "keywords": ["three"]},
+        ]
+    }
+    result = ResearchAgent(
+        ResearchLLM(), [RaisingSource(), HealthyLiteratureSource()]
+    ).run(extracted, iteration=1, run_dir=tmp_path)
+    assert result["verified_elements"] == 3
+    assert result["documents_retrieved"] == {"e1": 1, "e2": 1, "e3": 1}
+    assert len(result["source_errors"]) == 3
+    assert result["source_errors"][0]["source"] == "flaky-literature"
+    assert "429 Too Many Requests" in (tmp_path / "run.log").read_text()
 
 
 def test_research_rejects_insufficient_document_evidence(tmp_path):
