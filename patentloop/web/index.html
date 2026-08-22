@@ -100,6 +100,19 @@
   .card.gate { border-left-color: var(--amber); }
   .card.pivot { border-left-color: var(--purple); }
   .card.draft { border-left-color: var(--green); }
+  .card.decision {
+    border-left-color: var(--cyan); border-color: rgba(0,229,255,.35);
+    background: rgba(0,229,255,.06);
+  }
+  .card.decision.kill_infeasible, .card.decision.kill_saturated {
+    border-left-color: var(--red); border-color: rgba(255,77,109,.35);
+    background: rgba(255,77,109,.06);
+  }
+  .card.decision.draft {
+    border-left-color: var(--green); border-color: rgba(43,255,171,.35);
+    background: rgba(43,255,171,.06);
+  }
+  .card.decision .card-title { color: var(--text); }
   .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .card-title {
     font: 700 11px "Consolas", monospace; letter-spacing: 2px; text-transform: uppercase;
@@ -109,6 +122,8 @@
   .card.coverage .card-title, .card.gate .card-title { color: var(--amber); }
   .card.pivot .card-title { color: var(--purple); }
   .card.draft .card-title { color: var(--green); }
+  .hint { font: 11px/1.5 "Segoe UI", system-ui, sans-serif; color: var(--dim); margin-top: 4px; }
+  .summary-text { font: 13px/1.65 "Segoe UI", system-ui, sans-serif; color: var(--text); margin-top: 8px; }
   .badge {
     font: 700 10px "Consolas", monospace; letter-spacing: 1px; border-radius: 20px;
     padding: 3px 10px; border: 1px solid var(--line); color: var(--dim); text-transform: uppercase;
@@ -256,18 +271,44 @@ function setBadge(badge, cls, text) {
 
 function metrics(box, entries) {
   const wrap = el('div', 'metrics');
-  for (const [label, value] of entries) {
+  for (const [label, value, tooltip] of entries) {
     const m = el('div', 'metric', label);
     m.prepend(el('b', '', String(value)));
+    if (tooltip) { m.title = tooltip; m.style.cursor = 'help'; }
     wrap.appendChild(m);
   }
   box.appendChild(wrap);
 }
 
+function hint(box, text) {
+  box.appendChild(el('div', 'hint', text));
+}
+
+const OUTCOME_LABELS = {
+  draft: 'Decision: draft the patent',
+  pivot: 'Decision: pivot the idea',
+  kill_infeasible: 'Decision: stop — not feasible',
+  kill_saturated: 'Decision: stop — field saturated'
+};
+
+function decisionCard(ev) {
+  const { box, badge } = card(`decision ${ev.outcome}`, OUTCOME_LABELS[ev.outcome] || 'Decision');
+  setBadge(badge, ev.outcome === 'draft' ? 'pass' : (ev.outcome === 'pivot' ? 'done' : 'fail'),
+           ev.outcome === 'draft' ? 'draft' : (ev.outcome === 'pivot' ? 'pivot' : 'stop'));
+  if (ev.novelty !== undefined) {
+    metrics(box, [
+      ['novelty', `${ev.novelty}/100`, 'How new the idea is versus published literature (higher is better; needs ≥ 60 to draft)'],
+      ['patent overlap', `${ev.overlap}/100`, 'How much existing patents already cover this idea (lower is better; needs ≤ 40 to draft)']
+    ]);
+  }
+  box.appendChild(el('div', 'summary-text', ev.summary || ''));
+}
+
 function coverageTable(ev) {
-  const { box, badge } = card('coverage', 'Coverage matrix — element × patent');
+  const { box, badge } = card('coverage', 'Coverage map — which patents cover which elements');
   setBadge(badge, ev.uncovered.length ? 'pass' : 'fail',
            ev.uncovered.length ? `${ev.uncovered.length} open` : 'all covered');
+  hint(box, 'Each row is one element of the idea; each column is a found patent. ✕ means that patent already discloses that element. Rows marked OPEN are the idea\u2019s free (potentially patentable) space.');
   const patents = ev.patents.slice(0, 8);
   const scroll = el('div', 'matrix-scroll');
   const table = el('table', 'matrix');
@@ -349,8 +390,9 @@ function handle(ev) {
       if (ev.iteration === 1) resetAgents(); else { resetAgents(); }
       break;
     case 'extracted': {
-      const { box, badge } = card('research', 'Element extraction');
+      const { box, badge } = card('research', 'Step 1 · Break the idea into technical elements');
       setBadge(badge, 'done', `${(ev.elements || []).length} elements`);
+      hint(box, 'The idea is split into its core building blocks; each one is checked against prior art separately.');
       const list = el('ul');
       (ev.elements || []).forEach((element, index) =>
         list.appendChild(el('li', '', `E${index + 1}  ${element}`)));
@@ -359,13 +401,18 @@ function handle(ev) {
     }
     case 'research':
       setAgent('research', 'active');
-      cards.research = card('research', 'Research agent — Semantic Scholar · arXiv · GitHub');
+      cards.research = card('research', 'Step 2 · Search published research (Semantic Scholar · arXiv · GitHub)');
+      hint(cards.research.box, 'Looks for papers and code that already describe the idea, then scores how novel it still is.');
       break;
     case 'research_done': {
       setAgent('research', 'done');
       const { box, badge } = cards.research;
       setBadge(badge, 'done', 'done');
-      metrics(box, [['novelty score', ev.novelty_score], ['documents retrieved', ev.documents_considered]]);
+      metrics(box, [
+        ['novelty score', `${ev.novelty_score}/100`, 'How new the idea is versus published literature (higher is better; needs ≥ 60 to draft)'],
+        ['documents retrieved', ev.documents_considered, 'Papers/repos actually read and judged for this iteration']
+      ]);
+      if ((ev.closest_prior_work || []).length) hint(box, 'Closest existing publications found:');
       if ((ev.closest_prior_work || []).length) {
         const list = el('ul');
         ev.closest_prior_work.forEach(w => {
@@ -381,7 +428,8 @@ function handle(ev) {
     }
     case 'patent_search':
       setAgent('patents', 'active');
-      cards.patents = card('patents', 'Patent search agent — Google Patents (US/EP/WIPO)');
+      cards.patents = card('patents', 'Step 3 · Search existing patents (Google Patents — US/EP/WIPO)');
+      hint(cards.patents.box, 'Finds granted patents and applications that overlap the idea\u2019s elements and scores the collision.');
       break;
     case 'coverage':
       coverageTable(ev);
@@ -390,7 +438,11 @@ function handle(ev) {
       setAgent('patents', 'done');
       const { box, badge } = cards.patents;
       setBadge(badge, 'done', 'done');
-      metrics(box, [['overlap score', ev.overlap_score], ['patents retrieved', ev.patents_considered]]);
+      metrics(box, [
+        ['overlap score', `${ev.overlap_score}/100`, 'How much existing patents already cover this idea (lower is better; needs ≤ 40 to draft)'],
+        ['patents retrieved', ev.patents_considered, 'Patent documents actually examined for this iteration']
+      ]);
+      if ((ev.matched_patents || []).length) hint(box, 'Patents that overlap this idea (chips show which elements collide):');
       if ((ev.matched_patents || []).length) {
         const list = el('ul');
         ev.matched_patents.forEach(p => {
@@ -404,7 +456,8 @@ function handle(ev) {
     }
     case 'feasibility':
       setAgent('gate', 'active');
-      cards.gate = card('gate', 'Feasibility gate — doable + scoped');
+      cards.gate = card('gate', 'Step 4 · Feasibility check');
+      hint(cards.gate.box, 'Two hard questions: can this actually be built (doable), and is it concrete enough to claim (scoped)? Failing either kills the run.');
       break;
     case 'feasibility_done': {
       setAgent('gate', ev.passed ? 'done' : null);
@@ -413,20 +466,26 @@ function handle(ev) {
       metrics(box, [['doable', ev.doable ? 'yes' : 'no'], ['scoped', ev.scoped ? 'yes' : 'no']]);
       break;
     }
+    case 'decision':
+      decisionCard(ev);
+      break;
     case 'pivot':
       setAgent('pivot', 'active');
-      cards.pivot = card('pivot', `Expert pivot agent — ${ev.field} specialist`);
+      cards.pivot = card('pivot', `Step 5 · Expert pivot (${ev.field} specialist)`);
+      hint(cards.pivot.box, 'A domain expert reshapes the idea toward a nearby gap that prior art doesn\u2019t cover; the next iteration re-tests the new version.');
       break;
     case 'pivot_done': {
       setAgent('pivot', 'done');
       const { box, badge } = cards.pivot;
       setBadge(badge, 'done', ev.pivot_direction || 'pivoted');
-      box.appendChild(el('div', 'reason', `→ ${ev.new_idea}`));
+      hint(box, 'New version of the idea for the next iteration:');
+      box.appendChild(el('div', 'summary-text', ev.new_idea));
       break;
     }
     case 'drafting':
       setAgent('draft', 'active');
-      cards.draft = card('draft', 'Drafting agent — provisional application');
+      cards.draft = card('draft', 'Final step · Drafting the provisional patent application');
+      hint(cards.draft.box, 'The idea cleared every gate — a full provisional application draft is being written.');
       break;
     case 'done': {
       if (ev.status === 'DRAFTED') {

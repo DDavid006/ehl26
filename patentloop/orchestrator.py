@@ -107,14 +107,27 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
             status = "KILLED_INFEASIBLE"
             failed = [name for name in ("doable", "scoped") if not gate[name]["pass"]]
             kill_reason = f"Feasibility gate failed ({', '.join(failed)}) on iteration {iteration}."
-            entry["decision"] = {"outcome": "kill_infeasible", "reason": kill_reason}
+            summary = ("The idea was stopped here because it failed the feasibility check: "
+                       + " and ".join("it is not technically doable as described" if name == "doable"
+                                       else "it is too vague/broad to support a concrete patent claim"
+                                       for name in failed) + ".")
+            entry["decision"] = {"outcome": "kill_infeasible", "reason": kill_reason, "summary": summary}
+            progress("decision", {"iteration": iteration, "outcome": "kill_infeasible",
+                                  "summary": summary, "novelty": research["novelty_score"],
+                                  "overlap": patent_search["overlap_score"]})
             break
 
         novelty = research["novelty_score"]
         overlap = patent_search["overlap_score"]
         if novelty >= NOVELTY_HIGH and overlap <= OVERLAP_LOW:
-            entry["decision"] = {"outcome": "draft", "reason":
+            summary = (f"Green light to draft: the idea scored {novelty}/100 on novelty "
+                       f"(needs at least {NOVELTY_HIGH}) against live literature, and only "
+                       f"{overlap}/100 on patent overlap (must stay at or below {OVERLAP_LOW}), "
+                       "so no existing patent blocks it and it is new enough to file.")
+            entry["decision"] = {"outcome": "draft", "summary": summary, "reason":
                                  f"novelty {novelty} >= {NOVELTY_HIGH} and overlap {overlap} <= {OVERLAP_LOW}"}
+            progress("decision", {"iteration": iteration, "outcome": "draft",
+                                  "summary": summary, "novelty": novelty, "overlap": overlap})
             progress("drafting", {"iteration": iteration})
             draft = run_drafting(current, extraction, research, patent_search)
             entry["draft"] = {"produced": True}
@@ -125,11 +138,27 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
             status = "KILLED_SATURATED"
             kill_reason = (f"Iteration cap ({MAX_ITERATIONS}) reached with overlap still "
                            f"{overlap} / novelty {novelty}; the field is saturated.")
-            entry["decision"] = {"outcome": "kill_saturated", "reason": kill_reason}
+            summary = (f"After {MAX_ITERATIONS} attempts the idea still overlaps existing patents "
+                       f"({overlap}/100, needs ≤ {OVERLAP_LOW}) or is not novel enough "
+                       f"({novelty}/100, needs ≥ {NOVELTY_HIGH}), so the loop stopped: "
+                       "this field looks saturated with prior art.")
+            entry["decision"] = {"outcome": "kill_saturated", "reason": kill_reason, "summary": summary}
+            progress("decision", {"iteration": iteration, "outcome": "kill_saturated",
+                                  "summary": summary, "novelty": novelty, "overlap": overlap})
             break
 
-        entry["decision"] = {"outcome": "pivot", "reason":
+        blockers = []
+        if overlap > OVERLAP_LOW:
+            blockers.append(f"patent overlap is too high ({overlap}/100, needs ≤ {OVERLAP_LOW})")
+        if novelty < NOVELTY_HIGH:
+            blockers.append(f"novelty is too low ({novelty}/100, needs ≥ {NOVELTY_HIGH})")
+        summary = ("Not ready to draft because " + " and ".join(blockers)
+                   + " — so the expert agent will pivot the idea toward an adjacent gap "
+                     "that prior art does not cover.")
+        entry["decision"] = {"outcome": "pivot", "summary": summary, "reason":
                              f"overlap {overlap} > {OVERLAP_LOW} or novelty {novelty} < {NOVELTY_HIGH}"}
+        progress("decision", {"iteration": iteration, "outcome": "pivot",
+                              "summary": summary, "novelty": novelty, "overlap": overlap})
         progress("pivot", {"iteration": iteration, "field": extraction["field"]})
         pivot = run_pivot(current, extraction["field"], research, patent_search)
         entry["pivot"] = pivot
@@ -145,7 +174,13 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
                 kill_reason = (f"Pivot proposals converged (cosine {similarity:.2f} >= "
                                f"{PIVOT_CONVERGENCE}) while overlap stayed high ({overlap}); "
                                "the pivot space is shrinking into the same blocked territory.")
-                entry["decision"] = {"outcome": "kill_saturated", "reason": kill_reason}
+                summary = ("The new pivot is almost identical to an earlier attempt "
+                           f"({similarity:.0%} similar) while patent overlap stays high "
+                           f"({overlap}/100), so continuing would just circle the same blocked "
+                           "territory — the loop stopped.")
+                entry["decision"] = {"outcome": "kill_saturated", "reason": kill_reason, "summary": summary}
+                progress("decision", {"iteration": iteration, "outcome": "kill_saturated",
+                                      "summary": summary, "novelty": novelty, "overlap": overlap})
                 break
         pivot_embeddings.append(vector)
         current = pivot["new_idea"]
