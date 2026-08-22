@@ -315,8 +315,34 @@ function coverageTable(ev) {
 
 let cards = {};
 
+function memoryCard(ev) {
+  const block = el('div', 'iteration');
+  const head = el('div', 'iteration-head');
+  head.appendChild(el('span', '', 'Cross-run memory'));
+  block.appendChild(head);
+  const box = el('div', 'card pivot');
+  const cardHead = el('div', 'card-head');
+  cardHead.appendChild(el('span', 'card-title', 'Recalled prior art from earlier runs'));
+  const badge = el('span', 'badge done', `${ev.hits.length} recalled`);
+  cardHead.appendChild(badge);
+  box.appendChild(cardHead);
+  const list = el('ul');
+  ev.hits.forEach(h => {
+    const li = el('li', '', `\u21b3 ${h.patent_id}  ${h.title} `);
+    li.appendChild(el('span', 'chip', `sim ${h.similarity}`));
+    li.appendChild(el('span', 'chip', `from run ${h.source_run_id}`));
+    list.appendChild(li);
+  });
+  box.appendChild(list);
+  block.appendChild(box);
+  $('timeline').appendChild(block);
+}
+
 function handle(ev) {
   switch (ev.event) {
+    case 'memory':
+      memoryCard(ev);
+      break;
     case 'extract':
       currentIteration = iterationBlock(ev.iteration, ev.idea);
       cards = {};

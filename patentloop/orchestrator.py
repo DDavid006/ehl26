@@ -12,6 +12,7 @@ from .agents import extract_elements, run_drafting, run_feasibility_gate, run_pa
 from .artifacts import write_artifacts
 from .coverage import build_matrix, elements_from_extraction
 from .llm import cosine, embed
+from .memory import recall, update_memory
 
 MAX_ITERATIONS = 4
 NOVELTY_HIGH = 60
@@ -39,6 +40,17 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
     kill_reason = ""
     draft: dict[str, Any] | None = None
 
+    try:
+        memory_hits = recall(idea, runs_dir)
+    except Exception:  # memory must never break a run (e.g. no embeddings available)
+        memory_hits = []
+    trace["memory_hits"] = memory_hits
+    if memory_hits:
+        progress("memory", {"hits": [
+            {k: h.get(k) for k in ("patent_id", "title", "similarity", "source_run_id")}
+            for h in memory_hits
+        ]})
+
     current = idea
     for iteration in range(1, MAX_ITERATIONS + 1):
         entry: dict[str, Any] = {"iteration": iteration, "idea": current}
@@ -62,7 +74,10 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
         progress("patent_search", {"iteration": iteration})
         patent_search = run_patent_search(current, extraction)
         entry["patent_search"] = patent_search
-        matrix = build_matrix(elements_from_extraction(extraction), patent_search["records"])
+        live_ids = {r.get("patent_id") for r in patent_search["records"]}
+        remembered = [h for h in memory_hits if h.get("patent_id") not in live_ids]
+        matrix = build_matrix(elements_from_extraction(extraction),
+                              remembered + patent_search["records"])
         entry["coverage_matrix"] = matrix
         progress("coverage", {
             "iteration": iteration,
@@ -141,6 +156,11 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
     trace["kill_reason"] = kill_reason
     trace["finished_at"] = time.time()
     trace["duration_seconds"] = round(trace["finished_at"] - started, 1)
+
+    try:
+        trace["memory_deposited"] = update_memory(runs_dir, trace)
+    except Exception:
+        trace["memory_deposited"] = 0
 
     run_dir = Path(runs_dir) / run_id
     write_artifacts(run_dir, trace, draft)
