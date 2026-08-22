@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Espacenet differentiator{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ url_for('index') }}">Espacenet differentiator</a>
+    <span class="tagline">features &rarr; Espacenet overlap matrix &rarr; substitute until distinct</span>
+  </header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <p class="flash {{ category }}">{{ message }}</p>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    Screening pass over public Espacenet records. Not a legal opinion and nothing is filed.
+  </footer>
+</body>
+</html>

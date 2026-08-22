@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h1>Describe the invention</h1>
+  <form method="post" action="{{ url_for('create_run') }}">
+    <label for="name">Name</label>
+    <input id="name" name="name" required
+           value="{{ draft.name if draft else '' }}"
+           placeholder="Self-cleaning heat exchanger for microfluidic chips">
+
+    <label for="purpose">Purpose</label>
+    <input id="purpose" name="purpose" required
+           value="{{ draft.purpose if draft else '' }}"
+           placeholder="Keeps microfluidic channels from fouling without disassembly">
+
+    <label for="description">Description
+      <span class="hint">the agents extract the features and materials from this text</span>
+    </label>
+    <textarea id="description" name="description" rows="8" required
+              placeholder="How it works, what it is made of, what problem it solves.">{{ draft.description if draft else '' }}</textarea>
+
+    <button type="submit">Queue differentiation run</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Runs</h2>
+  {% if runs %}
+  <table>
+    <thead>
+      <tr><th>Invention</th><th>Status</th><th>Features</th><th>Patents</th><th>Rounds</th><th>Submitted</th></tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td><a href="{{ url_for('show_run', run_id=run.run_id) }}">{{ run.invention.name }}</a></td>
+        <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
+        <td>{{ run.live_features|length }}</td>
+        <td>{{ run.patents|length }}</td>
+        <td>{{ run.iterations|selectattr('kind', 'equalto', 'similarity')|list|length }}</td>
+        <td class="muted">{{ run.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No runs yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

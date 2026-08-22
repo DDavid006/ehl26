@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}{{ run.invention.name }}{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <p class="muted"><a href="{{ url_for('index') }}">&larr; all runs</a></p>
+  <h1>{{ run.invention.name }}</h1>
+  <p>
+    <span class="badge {{ run.status }}" id="status-badge">{{ run.status }}</span>
+    <span class="muted">{{ status_labels[run.status] }}</span>
+  </p>
+  {% if run.error %}<p class="flash error">{{ run.error }}</p>{% endif %}
+
+  <h3>Purpose</h3>
+  <p>{{ run.invention.purpose }}</p>
+  <h3>Description</h3>
+  <p>{{ run.invention.description }}</p>
+  <p class="muted">Generated workflow: <code>{{ workflow_path }}</code>
+    {% if run.workflow_run_id %} &middot; workflow run <code>{{ run.workflow_run_id }}</code>{% endif %}
+  </p>
+</section>
+
+<section class="panel">
+  <h2>Feature &times; patent matrix</h2>
+  <p class="muted legend">
+    <span class="swatch absent"></span> the patent does not contain the feature
+    <span class="swatch present"></span> the patent contains it
+    <span class="swatch unknown"></span> not assessed
+  </p>
+  {% if rows and run.patents %}
+  <div class="matrix-scroll">
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          {% for patent in run.patents %}
+          <th class="patent-head" title="{{ patent.title }} - {{ patent.applicant }}">
+            {% if patent.url %}<a href="{{ patent.url }}" target="_blank" rel="noreferrer">{{ patent.publication }}</a>
+            {% else %}{{ patent.publication }}{% endif %}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <th class="feature-head">
+            {{ row.feature.text }}
+            <span class="badge tiny {{ row.feature.origin }}">{{ row.feature.origin }}</span>
+            <span class="muted tiny">{{ row.feature.kind }}</span>
+          </th>
+          {% for cell in row.cells %}
+          <td class="cell {{ 'present' if cell.present else ('unknown' if cell.present is none else 'absent') }}"
+              title="{{ row.feature.text }} - {{ cell.patent.publication }}"></td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No matrix yet - the searchers are still working.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Similarity and substitution rounds</h2>
+  {% if run.iterations %}
+    {% for item in run.iterations %}
+    <article class="round">
+      {% if item.kind == 'similarity' %}
+        <h3>Round {{ item.round }} &middot; similarity check</h3>
+        <p>Closest patent: <strong>{{ item.closest_patent or 'none' }}</strong>
+           &middot; shares {{ (item.overlap_ratio * 100)|round|int }}% of the features
+           &middot; {{ 'substitution triggered' if item.needs_substitution else 'below the half threshold' }}</p>
+        {% if item.shared_features %}
+        <ul>{% for feature in item.shared_features %}<li>{{ feature }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if item.reasoning %}<p class="muted">{{ item.reasoning }}</p>{% endif %}
+      {% else %}
+        <h3>Round {{ item.round }} &middot; substitution</h3>
+        <p><s>{{ item.removed }}</s> &rarr; <strong>{{ item.added }}</strong></p>
+        {% if item.rationale %}<p class="muted">{{ item.rationale }}</p>{% endif %}
+      {% endif %}
+    </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No rounds recorded yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Differentiated feature list</h2>
+  {% if run.live_features %}
+  <ul class="features">
+    {% for feature in run.live_features %}
+    <li>
+      {{ feature.text }}
+      <span class="badge tiny {{ feature.origin }}">{{ feature.origin }}</span>
+      {% if feature.origin == 'new' %}<span class="muted tiny">added in round {{ feature.round }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Features appear once the extractor has run.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>What the model is working on</h2>
+  <pre id="log">{{ log|join('\n') }}</pre>
+</section>
+
+<script>
+  const terminal = {{ terminal|tojson }};
+  const badge = document.getElementById("status-badge");
+  let fingerprint = null;
+
+  async function poll() {
+    const response = await fetch(window.location.pathname + "/state");
+    if (!response.ok) return;
+    const state = await response.json();
+    document.getElementById("log").textContent = state.log.join("\n");
+
+    const next = [state.status, state.features.length, state.patents.length,
+                  state.iterations.length, JSON.stringify(state.matrix)].join("|");
+    if (fingerprint !== null && next !== fingerprint) { window.location.reload(); return; }
+    fingerprint = next;
+
+    if (!terminal.includes(state.status)) setTimeout(poll, 3000);
+  }
+
+  if (!terminal.includes(badge.textContent.trim())) setTimeout(poll, 3000);
+</script>
+{% endblock %}

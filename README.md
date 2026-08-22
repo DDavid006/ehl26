@@ -1,9 +1,16 @@
 # ehl26
 
-Patent clearance and drafting: a multi-agent workflow plus a web GUI for
-submitting invention ideas and reviewing what the agents found.
+Two multi-agent workflows over one invention idea, each with its own web GUI:
 
-## What it does
+- **patent clearance and drafting** (`gui/`, `.devin/skills/patent-clearance/`) —
+  US prior-art search, a freedom-to-operate verdict, redesign, and a drafted
+  provisional application.
+- **Espacenet differentiation** (`differentiator/`,
+  `.devin/skills/espacenet-differentiation/`) — feature extraction, a feature ×
+  patent overlap matrix built from Espacenet, and a substitution loop that keeps
+  swapping duplicated features until no patent shares more than half of them.
+
+## Patent clearance
 
 For one invention idea:
 
@@ -30,9 +37,11 @@ sources plus a draft for a human attorney.
   `SKILL.md`. Run it with the `run_workflow` tool.
 - `gui/` — Flask app: submit an idea, watch a run, read the verdict, blocking
   references, redesign and drafted claims.
-- `runs/<run_id>/` — per-run state (git-ignored): `idea.json`, `state.json`,
-  `workflow.py` (the skill workflow with the submitted idea substituted in),
-  and `run.log`.
+- `differentiator/` — Flask app for the Espacenet differentiation run, plus its
+  progress CLI.
+- `runs/<run_id>/`, `diff-runs/<run_id>/` — per-run state (git-ignored):
+  the submitted idea, `state.json`, `workflow.py` (the skill workflow with the
+  submission substituted in), and `run.log`.
 
 ## Running the GUI
 
@@ -54,6 +63,44 @@ python -m gui.cli log    <run_id> "5 searchers dispatched"
 
 The run page polls `/runs/<run_id>/state` every 5s, so a live run updates
 without a reload.
+
+## Espacenet differentiation
+
+Submit the item's **name**, **purpose** and **description**; the agents take it
+from there:
+
+1. **extract** — one agent turns the description into features and materials.
+2. **search** — one Espacenet searcher per feature, in parallel, reporting only
+   documents it opened.
+3. **matrix** — one agent fills the feature × patent grid. On the run page a
+   green cell means that patent does *not* contain the feature, gray means it
+   does.
+4. **similarity** (first child) — finds the patent sharing the most features. At
+   or below half, the run is done.
+5. **substitute** (second child) — replaces one shared feature with a plausible
+   non-overlapping alternative, the new feature is searched and the matrix
+   refreshed, and the similarity child runs again.
+
+The final feature list marks substituted features as `new`, and the run page
+keeps a live log of what the agents are doing.
+
+```bash
+.venv/bin/python -m flask --app differentiator.app run --port 5001
+```
+
+Progress is pushed back from the workflow through its own CLI:
+
+```bash
+python -m differentiator.cli status       <run_id> searching --workflow-run-id wfr-...
+python -m differentiator.cli features     <run_id> --file features.json
+python -m differentiator.cli matrix       <run_id> --file matrix.json
+python -m differentiator.cli similarity   <run_id> --file similarity.json
+python -m differentiator.cli substitution <run_id> --file substitution.json
+python -m differentiator.cli log          <run_id> "opening EP1234567A1"
+```
+
+Per-run state lives in `diff-runs/<run_id>/` (git-ignored) and the run page
+polls `/runs/<run_id>/state` every 3s.
 
 ## Tests
 
