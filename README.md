@@ -12,8 +12,14 @@ Modules:
   model in the list when one is rate limited, retired or overloaded.
 - `decompose.py` — `decompose_invention(description)`: model-based split into 4-8 functional
   elements.
-- `coverage.py` — `build_matrix(elements, patents)` and the swappable `is_covered(element,
+- `coverage.py` — keyword `build_matrix(elements, patents)` and the swappable `is_covered(element,
   patent)`; `uncovered` lists elements no patent covers.
+- `judge.py` — model-based `build_matrix` with the same shape: one call per patent rules on all
+  elements at once, evidence quotes must appear verbatim in the reference text, results are
+  cached per (elements, patent) pair, and any failure falls back to the keyword matcher.
+  `COVERAGE_JUDGE=keyword` disables the model path (default `llm`).
+- `eval_coverage.py` + `coverage_eval.json` — hand-labelled coverage cells and a scorer:
+  `python eval_coverage.py [--judge llm]` prints precision / recall / F1 and each mismatch.
 - `suggest.py` — `generate_suggestions(matrix, description)`: 2-3 grounded patentability
   suggestions, and `generate_revision(matrix, description, verdict, suggestions)`: a rewritten
   invention description that designs around the blocking art.
