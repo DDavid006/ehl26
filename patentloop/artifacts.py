@@ -20,6 +20,7 @@ def write_artifacts(run_dir: Path, trace: dict[str, Any], draft: dict[str, Any] 
             "idea": entry["idea"],
             "research": entry.get("research"),
             "patent_search": entry.get("patent_search"),
+            "coverage_matrix": entry.get("coverage_matrix"),
         }
         for entry in trace["iterations"]
     ]
@@ -86,6 +87,18 @@ def _render_report(trace: dict[str, Any], draft: dict[str, Any] | None) -> str:
                 f"- {patent.get('patent_id')} {patent.get('title')} — overlaps: "
                 f"{', '.join(patent.get('overlapping_elements') or [])} — {patent.get('url')}"
             )
+        matrix = entry.get("coverage_matrix")
+        if matrix:
+            lines += ["", "**Element coverage matrix** (keyword overlap vs retrieved patents):", ""]
+            for element in matrix.get("elements") or []:
+                element_id = element.get("id")
+                cells = (matrix.get("coverage") or {}).get(element_id) or {}
+                covering = [pid for pid, cell in cells.items() if cell.get("covered")]
+                status = f"covered by {', '.join(covering)}" if covering else "UNCOVERED"
+                lines.append(f"- {element_id} ({element.get('text')}): {status}")
+            uncovered = matrix.get("uncovered") or []
+            lines += ["", f"Uncovered elements (potential novelty): "
+                          f"{', '.join(uncovered) if uncovered else 'none'}"]
         if gate:
             lines += [
                 "",

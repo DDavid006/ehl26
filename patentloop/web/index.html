@@ -14,6 +14,7 @@
     --green: #2bffab;
     --red: #ff4d6d;
     --amber: #ffc44d;
+    --purple: #b48cff;
     --text: #cfe6ff;
     --dim: #5d7ba0;
   }
@@ -77,16 +78,74 @@
   }
   .agent.done { color: var(--green); border-color: rgba(43,255,171,.4); }
   @keyframes pulse { 50% { box-shadow: 0 0 26px rgba(0,229,255,.6); } }
-  #log {
-    font: 12.5px/1.7 "Consolas", monospace; max-height: 420px; overflow-y: auto;
-    white-space: pre-wrap; word-break: break-word;
+
+  /* ---- structured timeline ---- */
+  #timeline { max-height: 640px; overflow-y: auto; }
+  .placeholder { font: 12.5px "Consolas", monospace; color: var(--dim); }
+  .iteration { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .iteration-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    font: 700 12px "Consolas", monospace; letter-spacing: 2px; color: var(--cyan);
+    text-transform: uppercase; margin-bottom: 4px;
   }
-  #log .t { color: var(--dim); }
-  #log .research { color: var(--cyan); }
-  #log .patents { color: var(--magenta); }
-  #log .gate { color: var(--amber); }
-  #log .pivot { color: #b48cff; }
-  #log .draft { color: var(--green); }
+  .iteration-idea { font-size: 13px; color: var(--text); line-height: 1.5; margin-bottom: 10px; }
+  .cards { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .card {
+    border: 1px solid var(--line); border-left: 3px solid var(--dim); border-radius: 8px;
+    padding: 10px 12px; background: rgba(3,6,14,.55);
+  }
+  .card.research { border-left-color: var(--cyan); }
+  .card.patents { border-left-color: var(--magenta); }
+  .card.coverage { border-left-color: var(--amber); }
+  .card.gate { border-left-color: var(--amber); }
+  .card.pivot { border-left-color: var(--purple); }
+  .card.draft { border-left-color: var(--green); }
+  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .card-title {
+    font: 700 11px "Consolas", monospace; letter-spacing: 2px; text-transform: uppercase;
+  }
+  .card.research .card-title { color: var(--cyan); }
+  .card.patents .card-title { color: var(--magenta); }
+  .card.coverage .card-title, .card.gate .card-title { color: var(--amber); }
+  .card.pivot .card-title { color: var(--purple); }
+  .card.draft .card-title { color: var(--green); }
+  .badge {
+    font: 700 10px "Consolas", monospace; letter-spacing: 1px; border-radius: 20px;
+    padding: 3px 10px; border: 1px solid var(--line); color: var(--dim); text-transform: uppercase;
+  }
+  .badge.running { color: var(--cyan); border-color: var(--cyan); animation: pulse 1.2s infinite; }
+  .badge.pass, .badge.done { color: var(--green); border-color: rgba(43,255,171,.5); }
+  .badge.fail { color: var(--red); border-color: rgba(255,77,109,.5); }
+  .metrics { display: flex; gap: 18px; margin-top: 8px; flex-wrap: wrap; }
+  .metric { font: 11px "Consolas", monospace; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  .metric b { display: block; font-size: 20px; letter-spacing: 0; color: var(--text); }
+  .card ul { list-style: none; margin-top: 8px; }
+  .card li { font: 12px/1.7 "Consolas", monospace; color: var(--text); }
+  .card li a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--dim); }
+  .card li .sub { color: var(--dim); }
+  .chip {
+    display: inline-block; font: 10px "Consolas", monospace; border: 1px solid var(--line);
+    border-radius: 20px; padding: 1px 8px; margin: 1px 2px; color: var(--dim);
+  }
+  .reason { font-size: 12.5px; line-height: 1.6; color: var(--text); margin-top: 8px; }
+
+  /* coverage matrix table */
+  .matrix-scroll { overflow-x: auto; margin-top: 8px; }
+  table.matrix { border-collapse: collapse; font: 11px "Consolas", monospace; }
+  table.matrix th, table.matrix td {
+    border: 1px solid var(--line); padding: 5px 8px; text-align: center; white-space: nowrap;
+  }
+  table.matrix th { color: var(--dim); font-weight: 400; }
+  table.matrix th a { color: var(--cyan); text-decoration: none; }
+  table.matrix td.el { text-align: left; color: var(--text); max-width: 320px; white-space: normal; }
+  table.matrix td.el .eid { color: var(--cyan); font-weight: 700; margin-right: 6px; }
+  table.matrix td.hit { color: var(--red); background: rgba(255,77,109,.12); cursor: help; }
+  table.matrix td.miss { color: rgba(93,123,160,.5); }
+  table.matrix td.free { color: var(--green); background: rgba(43,255,171,.10); font-weight: 700; }
+  tr.uncovered-row td.el .eid { color: var(--green); }
+  .matrix-note { font: 11px "Consolas", monospace; color: var(--dim); margin-top: 6px; line-height: 1.6; }
+  .matrix-note .open { color: var(--green); }
+
   .verdict { font: 700 22px "Consolas", monospace; letter-spacing: 3px; }
   .verdict.DRAFTED { color: var(--green); text-shadow: 0 0 16px rgba(43,255,171,.6); }
   .verdict.KILLED_SATURATED, .verdict.KILLED_INFEASIBLE {
@@ -130,8 +189,8 @@
   </section>
 
   <section class="panel">
-    <h2>Live log</h2>
-    <div id="log"><span class="t">// awaiting input</span></div>
+    <h2>Mission timeline</h2>
+    <div id="timeline"><div class="placeholder">// awaiting input</div></div>
   </section>
 
   <section class="panel hidden" id="result">
@@ -153,63 +212,215 @@ function setAgent(key, state) {
 }
 function resetAgents() { Object.keys(agents).forEach(k => setAgent(k, null)); }
 
-function log(text, cls) {
-  const div = $('log');
-  const stamp = new Date().toTimeString().slice(0, 8);
-  const line = document.createElement('div');
-  line.innerHTML = `<span class="t">[${stamp}]</span> <span class="${cls || ''}"></span>`;
-  line.lastChild.textContent = text;
-  div.appendChild(line);
-  div.scrollTop = div.scrollHeight;
+/* ---- structured timeline rendering ---- */
+let currentIteration = null;
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
 
+function iterationBlock(number, idea) {
+  const block = el('div', 'iteration');
+  const head = el('div', 'iteration-head');
+  head.appendChild(el('span', '', `Iteration ${number}`));
+  block.appendChild(head);
+  block.appendChild(el('div', 'iteration-idea', idea));
+  const cards = el('div', 'cards');
+  block.appendChild(cards);
+  const timeline = $('timeline');
+  timeline.appendChild(block);
+  timeline.scrollTop = timeline.scrollHeight;
+  return { block, cards };
+}
+
+function card(kind, title) {
+  const box = el('div', `card ${kind}`);
+  const head = el('div', 'card-head');
+  head.appendChild(el('span', 'card-title', title));
+  const badge = el('span', 'badge running', 'running');
+  head.appendChild(badge);
+  box.appendChild(head);
+  currentIteration.cards.appendChild(box);
+  const timeline = $('timeline');
+  timeline.scrollTop = timeline.scrollHeight;
+  return { box, badge };
+}
+
+function setBadge(badge, cls, text) {
+  badge.className = `badge ${cls}`;
+  badge.textContent = text;
+}
+
+function metrics(box, entries) {
+  const wrap = el('div', 'metrics');
+  for (const [label, value] of entries) {
+    const m = el('div', 'metric', label);
+    m.prepend(el('b', '', String(value)));
+    wrap.appendChild(m);
+  }
+  box.appendChild(wrap);
+}
+
+function coverageTable(ev) {
+  const { box, badge } = card('coverage', 'Coverage matrix — element × patent');
+  setBadge(badge, ev.uncovered.length ? 'pass' : 'fail',
+           ev.uncovered.length ? `${ev.uncovered.length} open` : 'all covered');
+  const patents = ev.patents.slice(0, 8);
+  const scroll = el('div', 'matrix-scroll');
+  const table = el('table', 'matrix');
+  const headRow = el('tr');
+  headRow.appendChild(el('th', '', 'Element'));
+  for (const p of patents) {
+    const th = el('th');
+    const a = el('a', '', p.patent_id || '?');
+    if (p.url) { a.href = p.url; a.target = '_blank'; }
+    a.title = p.title || '';
+    th.appendChild(a);
+    headRow.appendChild(th);
+  }
+  headRow.appendChild(el('th', '', 'Status'));
+  table.appendChild(headRow);
+
+  for (const element of ev.elements) {
+    const open = ev.uncovered.includes(element.id);
+    const row = el('tr', open ? 'uncovered-row' : '');
+    const label = el('td', 'el');
+    label.appendChild(el('span', 'eid', element.id));
+    label.appendChild(document.createTextNode(element.text));
+    row.appendChild(label);
+    const cells = (ev.coverage || {})[element.id] || {};
+    for (const p of patents) {
+      const cell = cells[p.patent_id] || {};
+      const td = el('td', cell.covered ? 'hit' : 'miss', cell.covered ? '✕' : '·');
+      if (cell.covered && cell.evidence) td.title = `evidence: ${cell.evidence}`;
+      row.appendChild(td);
+    }
+    row.appendChild(el('td', open ? 'free' : 'miss', open ? 'OPEN' : 'covered'));
+    table.appendChild(row);
+  }
+  scroll.appendChild(table);
+  box.appendChild(scroll);
+  const note = el('div', 'matrix-note');
+  note.append('✕ = patent covers element (hover for evidence sentence) · ');
+  const open = el('span', 'open',
+    ev.uncovered.length
+      ? `uncovered (potential novelty): ${ev.uncovered.join(', ')}`
+      : 'no uncovered elements — every element collides with prior art');
+  note.appendChild(open);
+  box.appendChild(note);
+}
+
+let cards = {};
+
 function handle(ev) {
-  const it = ev.iteration ? `iter ${ev.iteration} · ` : '';
   switch (ev.event) {
     case 'extract':
-      resetAgents();
-      log(`${it}analysing idea: ${ev.idea}`, 'research'); break;
-    case 'extracted':
-      log(`${it}core elements: ${(ev.elements || []).join(' | ')}`, 'research'); break;
+      currentIteration = iterationBlock(ev.iteration, ev.idea);
+      cards = {};
+      if (ev.iteration === 1) resetAgents(); else { resetAgents(); }
+      break;
+    case 'extracted': {
+      const { box, badge } = card('research', 'Element extraction');
+      setBadge(badge, 'done', `${(ev.elements || []).length} elements`);
+      const list = el('ul');
+      (ev.elements || []).forEach((element, index) =>
+        list.appendChild(el('li', '', `E${index + 1}  ${element}`)));
+      box.appendChild(list);
+      break;
+    }
     case 'research':
       setAgent('research', 'active');
-      log(`${it}RESEARCH AGENT → Semantic Scholar / arXiv / GitHub`, 'research'); break;
-    case 'research_done':
-      setAgent('research', 'done');
-      log(`${it}novelty_score = ${ev.novelty_score} (${ev.documents_considered} documents retrieved)`, 'research');
-      (ev.closest_prior_work || []).forEach(w => log(`   ↳ ${w.title} — ${w.url}`, 'research'));
+      cards.research = card('research', 'Research agent — Semantic Scholar · arXiv · GitHub');
       break;
+    case 'research_done': {
+      setAgent('research', 'done');
+      const { box, badge } = cards.research;
+      setBadge(badge, 'done', 'done');
+      metrics(box, [['novelty score', ev.novelty_score], ['documents retrieved', ev.documents_considered]]);
+      if ((ev.closest_prior_work || []).length) {
+        const list = el('ul');
+        ev.closest_prior_work.forEach(w => {
+          const li = el('li');
+          const a = el('a', '', w.title);
+          if (w.url) { a.href = w.url; a.target = '_blank'; }
+          li.append('↳ '); li.appendChild(a);
+          list.appendChild(li);
+        });
+        box.appendChild(list);
+      }
+      break;
+    }
     case 'patent_search':
       setAgent('patents', 'active');
-      log(`${it}PATENT SEARCH AGENT → Google Patents (US/EP/WIPO)`, 'patents'); break;
-    case 'patent_search_done':
-      setAgent('patents', 'done');
-      log(`${it}overlap_score = ${ev.overlap_score} (${ev.patents_considered} patents retrieved)`, 'patents');
-      (ev.matched_patents || []).forEach(p =>
-        log(`   ↳ ${p.patent_id} ${p.title} [${(p.overlapping_elements || []).join(', ')}]`, 'patents'));
+      cards.patents = card('patents', 'Patent search agent — Google Patents (US/EP/WIPO)');
       break;
+    case 'coverage':
+      coverageTable(ev);
+      break;
+    case 'patent_search_done': {
+      setAgent('patents', 'done');
+      const { box, badge } = cards.patents;
+      setBadge(badge, 'done', 'done');
+      metrics(box, [['overlap score', ev.overlap_score], ['patents retrieved', ev.patents_considered]]);
+      if ((ev.matched_patents || []).length) {
+        const list = el('ul');
+        ev.matched_patents.forEach(p => {
+          const li = el('li', '', `↳ ${p.patent_id}  ${p.title} `);
+          (p.overlapping_elements || []).forEach(o => li.appendChild(el('span', 'chip', o)));
+          list.appendChild(li);
+        });
+        box.appendChild(list);
+      }
+      break;
+    }
     case 'feasibility':
       setAgent('gate', 'active');
-      log(`${it}FEASIBILITY GATE → doable + scoped checks`, 'gate'); break;
-    case 'feasibility_done':
+      cards.gate = card('gate', 'Feasibility gate — doable + scoped');
+      break;
+    case 'feasibility_done': {
       setAgent('gate', ev.passed ? 'done' : null);
-      log(`${it}gate ${ev.passed ? 'PASS' : 'FAIL'} (doable=${ev.doable}, scoped=${ev.scoped})`, 'gate'); break;
+      const { box, badge } = cards.gate;
+      setBadge(badge, ev.passed ? 'pass' : 'fail', ev.passed ? 'pass' : 'fail');
+      metrics(box, [['doable', ev.doable ? 'yes' : 'no'], ['scoped', ev.scoped ? 'yes' : 'no']]);
+      break;
+    }
     case 'pivot':
       setAgent('pivot', 'active');
-      log(`${it}EXPERT PIVOT AGENT → persona: ${ev.field} specialist`, 'pivot'); break;
-    case 'pivot_done':
+      cards.pivot = card('pivot', `Expert pivot agent — ${ev.field} specialist`);
+      break;
+    case 'pivot_done': {
       setAgent('pivot', 'done');
-      log(`${it}pivot [${ev.pivot_direction}] → ${ev.new_idea}`, 'pivot'); break;
+      const { box, badge } = cards.pivot;
+      setBadge(badge, 'done', ev.pivot_direction || 'pivoted');
+      box.appendChild(el('div', 'reason', `→ ${ev.new_idea}`));
+      break;
+    }
     case 'drafting':
       setAgent('draft', 'active');
-      log(`${it}DRAFTING AGENT → writing provisional application`, 'draft'); break;
-    case 'done':
-      if (ev.status === 'DRAFTED') setAgent('draft', 'done');
-      log(`LOOP TERMINATED: ${ev.status}${ev.kill_reason ? ' — ' + ev.kill_reason : ''}`,
-          ev.status === 'DRAFTED' ? 'draft' : 'gate');
+      cards.draft = card('draft', 'Drafting agent — provisional application');
       break;
+    case 'done': {
+      if (ev.status === 'DRAFTED') {
+        setAgent('draft', 'done');
+        if (cards.draft) setBadge(cards.draft.badge, 'done', 'drafted');
+      }
+      const { box, badge } = card(ev.status === 'DRAFTED' ? 'draft' : 'gate', 'Loop terminated');
+      setBadge(badge, ev.status === 'DRAFTED' ? 'pass' : 'fail', ev.status);
+      if (ev.kill_reason) box.appendChild(el('div', 'reason', ev.kill_reason));
+      break;
+    }
     case 'result': showResult(ev); break;
-    case 'error': log(`ERROR: ${ev.detail}`, 'gate'); break;
+    case 'error': {
+      const { box, badge } = currentIteration
+        ? card('gate', 'Error')
+        : (currentIteration = iterationBlock('—', ''), card('gate', 'Error'));
+      setBadge(badge, 'fail', 'error');
+      box.appendChild(el('div', 'reason', ev.detail || 'unknown error'));
+      break;
+    }
   }
 }
 
@@ -248,7 +459,9 @@ $('go').addEventListener('click', async () => {
   $('go').disabled = true;
   $('status').textContent = 'loop running — fully autonomous, no further input needed';
   $('result').classList.add('hidden');
-  $('log').innerHTML = '';
+  $('timeline').innerHTML = '';
+  currentIteration = null;
+  cards = {};
   resetAgents();
   try {
     const response = await fetch('/api/run', {
@@ -272,7 +485,7 @@ $('go').addEventListener('click', async () => {
       }
     }
   } catch (err) {
-    log('ERROR: ' + err.message, 'gate');
+    handle({ event: 'error', detail: err.message });
   } finally {
     $('go').disabled = false;
     $('status').textContent = '';

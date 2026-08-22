@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from .agents import extract_elements, run_drafting, run_feasibility_gate, run_patent_search, run_pivot, run_research
 from .artifacts import write_artifacts
+from .coverage import build_matrix, elements_from_extraction
 from .llm import cosine, embed
 
 MAX_ITERATIONS = 4
@@ -61,6 +62,16 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
         progress("patent_search", {"iteration": iteration})
         patent_search = run_patent_search(current, extraction)
         entry["patent_search"] = patent_search
+        matrix = build_matrix(elements_from_extraction(extraction), patent_search["records"])
+        entry["coverage_matrix"] = matrix
+        progress("coverage", {
+            "iteration": iteration,
+            "elements": [{"id": e["id"], "text": e["text"]} for e in matrix["elements"]],
+            "patents": [{"patent_id": p.get("patent_id"), "title": p.get("title"),
+                         "url": p.get("url")} for p in matrix["patents"]],
+            "coverage": matrix["coverage"],
+            "uncovered": matrix["uncovered"],
+        })
         progress("patent_search_done", {
             "iteration": iteration,
             "overlap_score": patent_search["overlap_score"],
