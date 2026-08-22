@@ -446,7 +446,7 @@ function showResult(ev) {
   if (ev.status === 'DRAFTED') files.push('draft_application.pdf');
   files.forEach(f => {
     const a = document.createElement('a');
-    a.href = `/api/runs/${ev.run_id}/${f}`;
+    a.href = `${window.location.origin}/api/runs/${ev.run_id}/${f}`;
     a.textContent = f;
     a.target = '_blank';
     links.appendChild(a);
@@ -464,7 +464,7 @@ $('go').addEventListener('click', async () => {
   cards = {};
   resetAgents();
   try {
-    const response = await fetch('/api/run', {
+    const response = await fetch(`${window.location.origin}/api/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ idea })
