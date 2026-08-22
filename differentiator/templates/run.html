@@ -114,8 +114,9 @@
 
 <script>
   const terminal = {{ terminal|tojson }};
-  const badge = document.getElementById("status-badge");
-  let fingerprint = null;
+  // Revision of the state this page was rendered from: anything newer means the
+  // matrix and rounds below are stale and the page has to be re-rendered.
+  const rendered = {{ run.revision|tojson }};
 
   async function poll() {
     const response = await fetch(window.location.pathname + "/state");
@@ -123,14 +124,10 @@
     const state = await response.json();
     document.getElementById("log").textContent = state.log.join("\n");
 
-    const next = [state.status, state.features.length, state.patents.length,
-                  state.iterations.length, JSON.stringify(state.matrix)].join("|");
-    if (fingerprint !== null && next !== fingerprint) { window.location.reload(); return; }
-    fingerprint = next;
-
+    if (state.revision > rendered) { window.location.reload(); return; }
     if (!terminal.includes(state.status)) setTimeout(poll, 3000);
   }
 
-  if (!terminal.includes(badge.textContent.trim())) setTimeout(poll, 3000);
+  if (!terminal.includes({{ run.status|tojson }})) setTimeout(poll, 3000);
 </script>
 {% endblock %}

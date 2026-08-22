@@ -68,6 +68,9 @@ class Run:
     iterations: list[dict] = field(default_factory=list)
     workflow_run_id: str | None = None
     error: str | None = None
+    # Bumped on every write so a page rendered at revision N can tell that the
+    # state it is polling has moved on, without diffing the state itself.
+    revision: int = 0
 
     @property
     def live_features(self) -> list[dict]:
@@ -236,11 +239,12 @@ class RunStore:
         """Record one similarity check by the first child agent."""
         run = self.get(run_id)
         entry = {
-            "round": len(run.iterations) + 1,
+            "round": len([i for i in run.iterations if i["kind"] == "similarity"]) + 1,
             "kind": "similarity",
             "closest_patent": payload.get("closest_patent", ""),
             "overlap_ratio": payload.get("overlap_ratio", 0.0),
             "shared_features": payload.get("shared_features", []),
+            "shared_feature_ids": payload.get("shared_feature_ids", []),
             "needs_substitution": bool(payload.get("needs_substitution")),
             "reasoning": payload.get("reasoning", ""),
         }
@@ -296,6 +300,8 @@ class RunStore:
         return run
 
     def log(self, run_id: str, message: str) -> None:
+        if not (self.runs_dir / run_id / "state.json").is_file():
+            raise StoreError(f"no such run: {run_id}")
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with (self.runs_dir / run_id / "run.log").open("a") as handle:
             handle.write(f"[{stamp}] {message}\n")
@@ -323,6 +329,7 @@ class RunStore:
             iterations=state.get("iterations", []),
             workflow_run_id=state.get("workflow_run_id"),
             error=state.get("error"),
+            revision=state.get("revision", 0),
         )
 
     def list(self) -> list[Run]:
@@ -355,6 +362,7 @@ class RunStore:
         return candidate
 
     def _write_state(self, run: Run) -> None:
+        run.revision += 1
         state = {
             "run_id": run.run_id,
             "invention": run.invention.as_dict(),
@@ -366,6 +374,7 @@ class RunStore:
             "iterations": run.iterations,
             "workflow_run_id": run.workflow_run_id,
             "error": run.error,
+            "revision": run.revision,
         }
         path = self.runs_dir / run.run_id / "state.json"
         path.write_text(json.dumps(state, indent=2) + "\n")

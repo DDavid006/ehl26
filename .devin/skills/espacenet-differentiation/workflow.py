@@ -43,6 +43,11 @@ MAX_ROUNDS = 6
 # Patents each per-feature searcher may report.
 HITS_PER_FEATURE = 6
 
+# One searcher is dispatched per feature, so a description broken into dozens of
+# elements would fan out into dozens of child sessions. Keep only the most
+# distinctive ones.
+MAX_FEATURES = 10
+
 ESPACENET = (
     "Espacenet (https://worldwide.espacenet.com/patent/search). Use the classic "
     "smart search syntax, e.g. `txt=\"phase change material\" AND txt=heat sink`, "
@@ -263,7 +268,9 @@ async def extract():
         "the base plate', not 'aluminium'). Mark each entry as 'material' when it is "
         "primarily a material choice, otherwise 'feature'. Do not invent features "
         "that the description does not support, and do not merge two ideas into one "
-        "entry.",
+        f"entry. Return at most {MAX_FEATURES} entries: if the description supports "
+        "more, keep the ones that most distinguish the invention from an ordinary "
+        "implementation and drop the generic ones.",
         phase="extract",
         schema=EXTRACT_SCHEMA,
         label="extract",
@@ -421,12 +428,12 @@ async def main():
             "kind": entry["kind"],
             "origin": "original",
         }
-        for index, entry in enumerate(extracted["features"], start=1)
+        for index, entry in enumerate(extracted["features"][:MAX_FEATURES], start=1)
     ]
     # Ids are handed out in creation order and never reused, so they keep
     # matching the GUI's own numbering as features are substituted.
     features_created = len(features)
-    push("features", {"features": extracted["features"]})
+    push("features", {"features": extracted["features"][:MAX_FEATURES]})
     note(f"{len(features)} features and materials extracted")
 
     push("status", None, "searching")
@@ -446,6 +453,7 @@ async def main():
                 "closest_patent": verdict["closest_patent"],
                 "overlap_ratio": verdict["overlap_ratio"],
                 "shared_features": verdict["shared_features"],
+                "shared_feature_ids": verdict["shared_feature_ids"],
                 "needs_substitution": verdict["overlap_ratio"] > OVERLAP_THRESHOLD,
                 "reasoning": verdict["reasoning"],
             },

@@ -96,6 +96,17 @@ def test_state_endpoint_feeds_the_live_log(client, store):
     assert any("opening EP1234567A1" in line for line in state["log"])
 
 
+def test_run_page_knows_when_the_state_it_rendered_is_stale(client, store):
+    submit(client)
+    run_id = store.list()[0].run_id
+    page = client.get(f"/runs/{run_id}").data.decode()
+    rendered = int(page.split("const rendered = ")[1].split(";")[0])
+
+    assert client.get(f"/runs/{run_id}/state").get_json()["revision"] == rendered
+    store.record_features(run_id, [{"text": "piezo actuator", "kind": "feature"}])
+    assert client.get(f"/runs/{run_id}/state").get_json()["revision"] > rendered
+
+
 def test_unknown_run_is_404(client):
     assert client.get("/runs/nope").status_code == 404
     assert client.get("/runs/nope/state").status_code == 404

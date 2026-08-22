@@ -157,6 +157,42 @@ def test_a_feature_cannot_be_substituted_twice(store, invention):
         )
 
 
+def test_similarity_rounds_are_numbered_past_substitutions(store, invention):
+    run = store.create(invention)
+    store.record_features(
+        run.run_id,
+        [{"text": "piezo actuator", "kind": "feature"},
+         {"text": "aluminium fin stack", "kind": "material"}],
+    )
+    verdict = {"closest_patent": "EP1234567A1", "overlap_ratio": 0.6,
+               "shared_features": ["piezo actuator"],
+               "shared_feature_ids": ["f1"], "needs_substitution": True}
+    store.record_similarity(run.run_id, verdict)
+    store.record_substitution(
+        run.run_id, {"feature_id": "f1", "replacement": "magnetostrictive actuator"}
+    )
+    run = store.record_similarity(run.run_id, {**verdict, "overlap_ratio": 0.25,
+                                               "needs_substitution": False})
+
+    assert [(i["kind"], i["round"]) for i in run.iterations] == [
+        ("similarity", 1), ("substitution", 1), ("similarity", 2),
+    ]
+    assert run.iterations[0]["shared_feature_ids"] == ["f1"]
+
+
+def test_every_write_bumps_the_revision(store, invention):
+    run = store.create(invention)
+    first = run.revision
+    run = store.record_features(run.run_id, [{"text": "piezo actuator"}])
+    assert run.revision > first
+    assert store.get(run.run_id).revision == run.revision
+
+
+def test_logging_to_an_unknown_run_is_a_store_error(store):
+    with pytest.raises(StoreError, match="no such run"):
+        store.log("nope", "hello")
+
+
 def test_set_status_rejects_unknown_statuses(store, invention):
     run = store.create(invention)
     with pytest.raises(StoreError):

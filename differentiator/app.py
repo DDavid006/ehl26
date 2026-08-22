@@ -90,6 +90,7 @@ def create_app(runs_dir: Path | str | None = None) -> Flask:
         except StoreError:
             abort(404)
         return {
+            "revision": run.revision,
             "status": run.status,
             "features": run.live_features,
             "patents": run.patents,
