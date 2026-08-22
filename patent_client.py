@@ -1,32 +1,47 @@
-"""Patent search via the Serper web search API with a local fallback corpus.
+"""Patent search performed by OpenAI's hosted web search, with a local fallback corpus.
 
-Records are built from the search results themselves; the patent hosts block
-server-side fetches, so no patent page is ever retrieved.
+The model does the searching: it is asked for patent records from Google Patents
+or Espacenet and returns them as JSON. The patent hosts block server-side
+fetches, so no patent page is ever retrieved directly.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from pathlib import Path
 from typing import Any, Optional
 
-import requests
 from dotenv import load_dotenv
+
+from llm import search_text
 
 load_dotenv()
 
-SERPER_ENDPOINT = "https://google.serper.dev/search"
 ALLOWED_HOSTS = ("patents.google.com", "worldwide.espacenet.com")
+PATENT_ID = re.compile(r"^[A-Z]{2}[A-Z0-9/]*\d[A-Z0-9/]*$")
+SEARCH_PROMPT = """Search the web for patent publications about: {query}
+
+Use only {hosts} as sources, and open the results you report - do not answer \
+from memory and do not invent a publication number.
+
+Return the {limit} most relevant publications as JSON only: no prose, no \
+markdown fences. The response must be a JSON array of objects with exactly \
+these keys:
+[{{"patent_id": "US10123456B2", "title": "...", "abstract": "...", \
+"assignee": "...", "date": "YYYY-MM-DD"}}]
+
+"abstract" is the publication's own abstract, trimmed to about 60 words. Use \
+null for a field the source does not give. Return [] if nothing relevant \
+exists rather than padding the list."""
 FALLBACK_PATH = Path(__file__).resolve().parent / "fallback_corpus.json"
 RESULT_KEYS = ("patent_id", "title", "abstract", "assignee", "date")
 # Callers ask for a handful of hits per query, and a real query commonly returns two,
 # so the fallback corpus is only for a query that yields nothing usable.
 MIN_RESULTS = 1
-TIME_BUDGET_SECONDS = 15
-REQUEST_TIMEOUT = 10
+# A browsing turn is slower than a search API, and every element searches in parallel.
+TIME_BUDGET_SECONDS = 150
 
 FALLBACK_ENTRIES: list[dict[str, Optional[str]]] = [
     {
@@ -106,30 +121,35 @@ def _normalize(entry: dict[str, Any]) -> dict[str, Optional[str]]:
     return {key: entry.get(key) or None for key in RESULT_KEYS}
 
 
-def _is_allowed(url: str) -> bool:
-    return any(host in url for host in ALLOWED_HOSTS)
+class SearchError(RuntimeError):
+    """Raised when the search model cannot be reached."""
 
 
-def _serper_search(query: str, limit: int) -> list[dict[str, Any]]:
-    api_key = os.getenv("SERPER_API_KEY")
-    if not api_key:
+def _strip_fences(text: str) -> str:
+    cleaned = text.strip()
+    fence = re.match(r"^```[A-Za-z0-9_-]*\s*(.*?)\s*```$", cleaned, flags=re.DOTALL)
+    return fence.group(1).strip() if fence else cleaned
+
+
+def _parse_records(answer: str) -> list[dict[str, Any]]:
+    text = _strip_fences(answer)
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end < start:
         return []
-    response = requests.post(
-        SERPER_ENDPOINT,
-        headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
-        json={"q": f"{query} patent", "num": min(max(limit * 5, 20), 100)},
-        timeout=REQUEST_TIMEOUT,
+    try:
+        data = json.loads(text[start : end + 1])
+    except ValueError:
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _openai_search(query: str, limit: int) -> list[dict[str, Any]]:
+    answer = search_text(
+        SEARCH_PROMPT.format(query=query, limit=limit, hosts=" or ".join(ALLOWED_HOSTS)),
+        SearchError,
+        task=f"search: {query}",
     )
-    response.raise_for_status()
-    payload = response.json()
-    hits: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in payload.get("organic") or []:
-        url = (item or {}).get("link")
-        if isinstance(url, str) and _is_allowed(url) and url not in seen:
-            seen.add(url)
-            hits.append(item)
-    return hits
+    return _parse_records(answer)
 
 
 def _clean(value: Any) -> Optional[str]:
@@ -139,6 +159,8 @@ def _clean(value: Any) -> Optional[str]:
 
 
 def _patent_id_from_url(url: str) -> Optional[str]:
+    if not isinstance(url, str):
+        return None
     match = re.search(r"[?&]CC=([A-Z]{2})&NR=([^&#]+)", url)
     if match:
         return f"{match.group(1)}{match.group(2)}"
@@ -158,19 +180,20 @@ def _clean_title(title: Optional[str], patent_id: str) -> Optional[str]:
 
 
 def _record_from_hit(hit: dict[str, Any]) -> Optional[dict[str, Optional[str]]]:
-    url = hit.get("link")
-    if not isinstance(url, str):
-        return None
-    patent_id = _patent_id_from_url(url)
+    """Turn one reported publication into a record, or drop it if it has no id."""
+    patent_id = _clean(hit.get("patent_id")) or _patent_id_from_url(hit.get("url") or "")
     if not patent_id:
+        return None
+    patent_id = patent_id.replace(" ", "").replace(",", "").upper()
+    if not PATENT_ID.match(patent_id):
         return None
     return _normalize(
         {
             "patent_id": patent_id,
             "title": _clean_title(_clean(hit.get("title")), patent_id),
-            "abstract": _clean(hit.get("snippet")),
-            "assignee": None,
-            "date": None,
+            "abstract": _clean(hit.get("abstract")),
+            "assignee": _clean(hit.get("assignee")),
+            "date": _clean(hit.get("date")),
         }
     )
 
@@ -178,10 +201,10 @@ def _record_from_hit(hit: dict[str, Any]) -> Optional[dict[str, Optional[str]]]:
 def search_patents(query: str, limit: int = 10) -> list[dict]:
     """Search for patents matching ``query`` and return up to ``limit`` records.
 
-    Records come straight from the search results: id parsed out of the result
-    URL, title and abstract from the result title and snippet. Falls back to
-    ``fallback_corpus.json`` when no usable result is found or the call exceeds
-    the 15 second time budget.
+    The search itself is an OpenAI web-search turn restricted to Google Patents
+    and Espacenet; publications it reports without a well-formed publication
+    number are dropped. Falls back to ``fallback_corpus.json`` when no usable
+    result comes back or the call exceeds the time budget.
     """
     started = time.monotonic()
 
@@ -189,7 +212,7 @@ def search_patents(query: str, limit: int = 10) -> list[dict]:
         return []
 
     try:
-        hits = _serper_search(query, limit)
+        hits = _openai_search(query, limit)
     except Exception:
         hits = []
 

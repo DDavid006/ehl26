@@ -88,7 +88,7 @@ def judge_patentability(matrix: dict, description: str) -> dict:
     last_error: ExaminationError | None = None
     for _ in range(2):
         try:
-            return _parse_response(generate_text(prompt, ExaminationError))
+            return _parse_response(generate_text(prompt, ExaminationError, task="examine"))
         except ExaminationError as exc:
             last_error = exc
     raise last_error if last_error else ExaminationError("examination failed")

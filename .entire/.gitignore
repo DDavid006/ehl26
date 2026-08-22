@@ -1,4 +1,5 @@
 tmp/
+agent-logs/
 settings.local.json
 metadata/
 logs/
