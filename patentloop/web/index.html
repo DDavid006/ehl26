@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PatentLoop</title>
+<style>
+  :root {
+    --bg: #05070f;
+    --panel: rgba(13, 20, 38, 0.85);
+    --line: rgba(0, 229, 255, 0.18);
+    --cyan: #00e5ff;
+    --magenta: #ff2ec4;
+    --green: #2bffab;
+    --red: #ff4d6d;
+    --amber: #ffc44d;
+    --text: #cfe6ff;
+    --dim: #5d7ba0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 70% -10%, rgba(0,229,255,.08), transparent),
+      radial-gradient(900px 500px at 10% 110%, rgba(255,46,196,.07), transparent),
+      var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,.012) 2px 4px);
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 60px; }
+  header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  h1 {
+    font-family: "Consolas", "SFMono-Regular", monospace;
+    font-size: 30px; letter-spacing: 4px; color: var(--cyan);
+    text-shadow: 0 0 18px rgba(0,229,255,.55);
+  }
+  h1 .loop { color: var(--magenta); text-shadow: 0 0 18px rgba(255,46,196,.55); }
+  header small { color: var(--dim); letter-spacing: 2px; text-transform: uppercase; font-size: 11px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px; margin-top: 18px; backdrop-filter: blur(6px);
+    box-shadow: 0 0 30px rgba(0,229,255,.05) inset;
+  }
+  .panel h2 {
+    font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--dim);
+    margin-bottom: 12px;
+  }
+  textarea {
+    width: 100%; min-height: 96px; resize: vertical;
+    background: rgba(3,6,14,.9); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+    font: 14px/1.5 "Consolas", monospace; outline: none;
+  }
+  textarea:focus { border-color: var(--cyan); box-shadow: 0 0 12px rgba(0,229,255,.25); }
+  .row { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+  button {
+    background: linear-gradient(135deg, rgba(0,229,255,.15), rgba(255,46,196,.15));
+    color: var(--cyan); border: 1px solid var(--cyan); border-radius: 8px;
+    padding: 10px 26px; font: 700 14px "Consolas", monospace; letter-spacing: 2px;
+    cursor: pointer; text-transform: uppercase; transition: all .2s;
+  }
+  button:hover:not(:disabled) { box-shadow: 0 0 20px rgba(0,229,255,.45); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .agents { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .agent {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 8px; text-align: center;
+    font: 11px "Consolas", monospace; letter-spacing: 1px; color: var(--dim);
+    text-transform: uppercase; transition: all .3s; position: relative;
+  }
+  .agent.active {
+    color: var(--cyan); border-color: var(--cyan);
+    box-shadow: 0 0 16px rgba(0,229,255,.35); animation: pulse 1.2s infinite;
+  }
+  .agent.done { color: var(--green); border-color: rgba(43,255,171,.4); }
+  @keyframes pulse { 50% { box-shadow: 0 0 26px rgba(0,229,255,.6); } }
+  #log {
+    font: 12.5px/1.7 "Consolas", monospace; max-height: 420px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #log .t { color: var(--dim); }
+  #log .research { color: var(--cyan); }
+  #log .patents { color: var(--magenta); }
+  #log .gate { color: var(--amber); }
+  #log .pivot { color: #b48cff; }
+  #log .draft { color: var(--green); }
+  .verdict { font: 700 22px "Consolas", monospace; letter-spacing: 3px; }
+  .verdict.DRAFTED { color: var(--green); text-shadow: 0 0 16px rgba(43,255,171,.6); }
+  .verdict.KILLED_SATURATED, .verdict.KILLED_INFEASIBLE {
+    color: var(--red); text-shadow: 0 0 16px rgba(255,77,109,.6);
+  }
+  #summary { margin-top: 10px; font-size: 14px; line-height: 1.6; }
+  .links { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .links a {
+    color: var(--cyan); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 14px; text-decoration: none; font: 12px "Consolas", monospace;
+  }
+  .links a:hover { border-color: var(--cyan); box-shadow: 0 0 12px rgba(0,229,255,.3); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>PATENT<span class="loop">LOOP</span></h1>
+    <small>autonomous prior-art verification loop</small>
+  </header>
+
+  <section class="panel">
+    <h2>Idea input</h2>
+    <textarea id="idea" placeholder="Describe your invention idea in plain text..."></textarea>
+    <div class="row">
+      <button id="go">Initiate loop</button>
+      <span id="status" style="font:12px 'Consolas',monospace;color:var(--dim)"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Agent pipeline</h2>
+    <div class="agents">
+      <div class="agent" id="ag-research">Research</div>
+      <div class="agent" id="ag-patents">Patent search</div>
+      <div class="agent" id="ag-gate">Feasibility</div>
+      <div class="agent" id="ag-pivot">Expert pivot</div>
+      <div class="agent" id="ag-draft">Drafting</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Live log</h2>
+    <div id="log"><span class="t">// awaiting input</span></div>
+  </section>
+
+  <section class="panel hidden" id="result">
+    <h2>Verdict</h2>
+    <div class="verdict" id="verdict"></div>
+    <div id="summary"></div>
+    <div class="links" id="links"></div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const agents = { research: 'ag-research', patents: 'ag-patents', gate: 'ag-gate', pivot: 'ag-pivot', draft: 'ag-draft' };
+
+function setAgent(key, state) {
+  const el = $(agents[key]);
+  el.classList.remove('active', 'done');
+  if (state) el.classList.add(state);
+}
+function resetAgents() { Object.keys(agents).forEach(k => setAgent(k, null)); }
+
+function log(text, cls) {
+  const div = $('log');
+  const stamp = new Date().toTimeString().slice(0, 8);
+  const line = document.createElement('div');
+  line.innerHTML = `<span class="t">[${stamp}]</span> <span class="${cls || ''}"></span>`;
+  line.lastChild.textContent = text;
+  div.appendChild(line);
+  div.scrollTop = div.scrollHeight;
+}
+
+function handle(ev) {
+  const it = ev.iteration ? `iter ${ev.iteration} · ` : '';
+  switch (ev.event) {
+    case 'extract':
+      resetAgents();
+      log(`${it}analysing idea: ${ev.idea}`, 'research'); break;
+    case 'extracted':
+      log(`${it}core elements: ${(ev.elements || []).join(' | ')}`, 'research'); break;
+    case 'research':
+      setAgent('research', 'active');
+      log(`${it}RESEARCH AGENT → Semantic Scholar / arXiv / GitHub`, 'research'); break;
+    case 'research_done':
+      setAgent('research', 'done');
+      log(`${it}novelty_score = ${ev.novelty_score} (${ev.documents_considered} documents retrieved)`, 'research');
+      (ev.closest_prior_work || []).forEach(w => log(`   ↳ ${w.title} — ${w.url}`, 'research'));
+      break;
+    case 'patent_search':
+      setAgent('patents', 'active');
+      log(`${it}PATENT SEARCH AGENT → Google Patents (US/EP/WIPO)`, 'patents'); break;
+    case 'patent_search_done':
+      setAgent('patents', 'done');
+      log(`${it}overlap_score = ${ev.overlap_score} (${ev.patents_considered} patents retrieved)`, 'patents');
+      (ev.matched_patents || []).forEach(p =>
+        log(`   ↳ ${p.patent_id} ${p.title} [${(p.overlapping_elements || []).join(', ')}]`, 'patents'));
+      break;
+    case 'feasibility':
+      setAgent('gate', 'active');
+      log(`${it}FEASIBILITY GATE → doable + scoped checks`, 'gate'); break;
+    case 'feasibility_done':
+      setAgent('gate', ev.passed ? 'done' : null);
+      log(`${it}gate ${ev.passed ? 'PASS' : 'FAIL'} (doable=${ev.doable}, scoped=${ev.scoped})`, 'gate'); break;
+    case 'pivot':
+      setAgent('pivot', 'active');
+      log(`${it}EXPERT PIVOT AGENT → persona: ${ev.field} specialist`, 'pivot'); break;
+    case 'pivot_done':
+      setAgent('pivot', 'done');
+      log(`${it}pivot [${ev.pivot_direction}] → ${ev.new_idea}`, 'pivot'); break;
+    case 'drafting':
+      setAgent('draft', 'active');
+      log(`${it}DRAFTING AGENT → writing provisional application`, 'draft'); break;
+    case 'done':
+      if (ev.status === 'DRAFTED') setAgent('draft', 'done');
+      log(`LOOP TERMINATED: ${ev.status}${ev.kill_reason ? ' — ' + ev.kill_reason : ''}`,
+          ev.status === 'DRAFTED' ? 'draft' : 'gate');
+      break;
+    case 'result': showResult(ev); break;
+    case 'error': log(`ERROR: ${ev.detail}`, 'gate'); break;
+  }
+}
+
+function showResult(ev) {
+  $('result').classList.remove('hidden');
+  const v = $('verdict');
+  v.textContent = ev.status;
+  v.className = 'verdict ' + ev.status;
+  const summaries = {
+    DRAFTED: 'The idea survived every gate: novelty confirmed against live literature, no blocking claim overlap found at the USPTO, and the feasibility gate passed. A provisional patent application draft has been generated.',
+    KILLED_SATURATED: 'The loop pivoted through variants but claim overlap with existing patents stayed high and the pivot space converged — the field is saturated.',
+    KILLED_INFEASIBLE: 'The feasibility gate rejected the idea: it is either not technically doable or too broadly scoped to support a real patent claim.'
+  };
+  let text = summaries[ev.status] || '';
+  if (ev.kill_reason) text += ' ' + ev.kill_reason;
+  if (ev.lineage && ev.lineage.length > 1) {
+    text += ` The idea evolved through ${ev.lineage.length} versions during the run.`;
+  }
+  $('summary').textContent = text;
+  const links = $('links');
+  links.innerHTML = '';
+  const files = ['report.md', 'prior_art.json', 'trace.json'];
+  if (ev.status === 'DRAFTED') files.push('draft_application.pdf');
+  files.forEach(f => {
+    const a = document.createElement('a');
+    a.href = `/api/runs/${ev.run_id}/${f}`;
+    a.textContent = f;
+    a.target = '_blank';
+    links.appendChild(a);
+  });
+}
+
+$('go').addEventListener('click', async () => {
+  const idea = $('idea').value.trim();
+  if (!idea) return;
+  $('go').disabled = true;
+  $('status').textContent = 'loop running — fully autonomous, no further input needed';
+  $('result').classList.add('hidden');
+  $('log').innerHTML = '';
+  resetAgents();
+  try {
+    const response = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idea })
+    });
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try { const ev = JSON.parse(line); if (ev.event !== 'heartbeat') handle(ev); }
+        catch (e) { /* partial line */ }
+      }
+    }
+  } catch (err) {
+    log('ERROR: ' + err.message, 'gate');
+  } finally {
+    $('go').disabled = false;
+    $('status').textContent = '';
+  }
+});
+</script>
+</body>
+</html>
