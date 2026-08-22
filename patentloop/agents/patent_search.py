@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
+import json
+
+from . import AUTONOMOUS_INSTRUCTION
+from ..errors import EvidenceFailure
 
 WEIGHTS = {"maps": 1.0, "partial": 0.5, "none": 0.0}
 
@@ -63,11 +67,16 @@ class PatentSearchAgent:
             },
         }
         prompt = (
-            "You are a patent-search specialist. Use your browser to open real "
-            "public patent database records and search these invention keywords: "
-            f"{keywords}. Open every record you report. Never invent or infer a "
-            "reference that you did not open. Return verbatim claim text captured "
-            f"from the opened record. The idea is:\n{idea_text}"
+            AUTONOMOUS_INSTRUCTION
+            + "You are a patent-search specialist. Use your browser to open real "
+            "public patent database records. Open every record you report. Never "
+            "invent or infer a reference that you did not open. Return verbatim "
+            "claim text captured from the opened record.\n"
+            + json.dumps(
+                {"idea": idea_text, "keywords": keywords},
+                indent=2,
+                sort_keys=True,
+            )
         )
         output = self.llm.chat(prompt, schema, agent="devin_patent_search", title="PatentLoop patent search")
         evidence_path = getattr(self.llm, "last_log_path", None)
@@ -85,6 +94,7 @@ class PatentSearchAgent:
                 "raw_path": evidence_path,
             }
             for hit in output.get("hits", [])
+            if hit.get("patent_number") and hit.get("claim_text") and hit.get("url")
         ]
 
     def run(self, idea_text: str, extracted: dict, *, iteration: int, run_dir) -> dict:
@@ -92,8 +102,29 @@ class PatentSearchAgent:
         hits = []
         for source in self.sources:
             hits.extend(source.search(keywords, iteration=iteration, run_dir=run_dir))
+        if not hits:
+            broadened = []
+            for element in extracted["elements"]:
+                terms = element.get("keywords") or [element.get("text", "")]
+                for term in terms[:3]:
+                    if term:
+                        broadened.append(term)
+            for source in self.sources:
+                for term in broadened:
+                    hits.extend(source.search([term], iteration=iteration, run_dir=run_dir))
+        unique_hits = {}
+        for hit in hits:
+            identifier = hit.get("id") or hit.get("patent_number") or hit.get("url")
+            if identifier:
+                unique_hits[identifier] = hit
+        hits = list(unique_hits.values())
         if not hits and self.allow_devin_search:
             hits = self._devin_search(idea_text, keywords)
+        if not hits:
+            raise EvidenceFailure(
+                "Patent search returned no records after broadened queries",
+                {"patents_examined": 0},
+            )
         vectors, embed_path = self.llm.embed(
             [idea_text] + [f"{item.get('claims', '')} {item.get('abstract', '')}" for item in hits],
             agent="patent_rank",
@@ -109,9 +140,42 @@ class PatentSearchAgent:
         llm_paths = [embed_path] if embed_path else []
         def map_claims(patent):
             result = self.llm.chat(
-                "Map each idea element to exact claim language. Claim quotes must be substrings.\n"
-                + str({"elements": extracted["elements"], "patent": patent}),
-                {"name": "claim_mapping", "schema": {"type": "object", "required": ["element_verdicts"], "properties": {"element_verdicts": {"type": "array"}}}},
+                AUTONOMOUS_INSTRUCTION
+                + "Map each idea element to exact claim language. Claim quotes must be substrings.\n"
+                + json.dumps(
+                    {"elements": extracted["elements"], "patent": patent},
+                    indent=2,
+                    sort_keys=True,
+                ),
+                {
+                    "name": "claim_mapping",
+                    "schema": {
+                        "type": "object",
+                        "required": ["element_verdicts"],
+                        "properties": {
+                            "element_verdicts": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": [
+                                        "element_id", "verdict", "claim_number",
+                                        "claim_quote", "why",
+                                    ],
+                                    "properties": {
+                                        "element_id": {"type": "string"},
+                                        "verdict": {
+                                            "type": "string",
+                                            "enum": ["maps", "partial", "none"],
+                                        },
+                                        "claim_number": {"type": "string"},
+                                        "claim_quote": {"type": "string"},
+                                        "why": {"type": "string"},
+                                    },
+                                },
+                            }
+                        },
+                    },
+                },
                 agent=f"claim_map_{patent.get('id', 'unknown')}",
             )
             verdicts = [
@@ -133,5 +197,6 @@ class PatentSearchAgent:
             "patents": kept,
             "overlap_score": overlap_score(kept),
             "runner_up": kept[1] if len(kept) > 1 else None,
+            "patents_examined": len(kept),
             "llm_paths": llm_paths,
         }

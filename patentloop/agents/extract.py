@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
+import json
+
+from . import AUTONOMOUS_INSTRUCTION
+
 EXTRACT_SCHEMA = {
     "name": "extract_idea",
     "schema": {
         "type": "object",
         "required": ["elements", "field", "persona_hint"],
         "properties": {
-            "elements": {"type": "array", "minItems": 3, "maxItems": 6},
+            "elements": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 6,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "name", "text", "keywords"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "text": {"type": "string"},
+                        "keywords": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
             "field": {"type": "string"},
             "persona_hint": {"type": "string"},
         },
@@ -18,8 +36,9 @@ EXTRACT_SCHEMA = {
 
 def extract_idea(idea_text: str, llm, *, agent: str = "extract") -> tuple[dict, str | None]:
     output = llm.chat(
-        "Decompose an invention into 3 to 6 concrete claim elements.\n\n"
-        + idea_text,
+        AUTONOMOUS_INSTRUCTION
+        + "Decompose an invention into 3 to 6 concrete claim elements.\n\n"
+        + json.dumps({"idea": idea_text}, indent=2, sort_keys=True),
         EXTRACT_SCHEMA,
         agent=agent,
     )

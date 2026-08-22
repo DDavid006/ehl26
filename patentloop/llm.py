@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,7 +47,7 @@ class Judge:
             self.backend = backend
             self.backend_name = type(backend).__name__
             return
-        selected = __import__("os").environ.get(
+        selected = os.environ.get(
             "PATENTLOOP_BACKEND", self.settings.backend
         ).lower()
         if selected == "devin":
@@ -107,12 +108,23 @@ class Judge:
         )
 
     def embed(self, texts: list[str], *, agent: str = "embed"):
-        return local_embed(texts), None
+        vectors = local_embed(
+            texts,
+            model_name=self.settings.embedding_model,
+            cache_dir=self.settings.model_cache,
+        )
+        record = {
+            "backend": "local_sentence_transformer",
+            "model_name": self.settings.embedding_model,
+            "vector_dimension": len(vectors[0]) if vectors else 0,
+            "count": len(texts),
+            "text_sha256": [
+                hashlib.sha256(text.encode("utf-8")).hexdigest() for text in texts
+            ],
+        }
+        return vectors, self._log(agent, record)
 
     def digest(self, value: Any) -> str:
         return hashlib.sha256(
             json.dumps(value, sort_keys=True, default=str).encode()
         ).hexdigest()
-
-
-LLMClient = Judge

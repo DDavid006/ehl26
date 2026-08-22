@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import math
+import json
 from concurrent.futures import ThreadPoolExecutor
+
+from . import AUTONOMOUS_INSTRUCTION
+from ..errors import EvidenceFailure
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -16,7 +20,7 @@ def cosine(a: list[float], b: list[float]) -> float:
 def element_novelty(element_vector: list[float], document_vectors: list[list[float]]) -> float:
     """1 - maximum cosine similarity over an element's top-ten documents."""
     if not document_vectors:
-        return 1.0
+        return 0.0
     return 1.0 - max(cosine(element_vector, vector) for vector in document_vectors[:10])
 
 
@@ -41,7 +45,13 @@ class ResearchAgent:
             query = " ".join(element.get("keywords") or [element["text"]])
             documents = []
             for source in self.sources:
-                documents.extend(source.search(query, iteration=iteration, run_dir=run_dir))
+                documents.extend(
+                    document
+                    for document in (
+                        source.search(query, iteration=iteration, run_dir=run_dir) or []
+                    )
+                    if document.get("abstract")
+                )
             return element["id"], documents
 
         documents_by_element = {}
@@ -50,11 +60,16 @@ class ResearchAgent:
             for element_id, documents in pool.map(search_element, extracted["elements"]):
                 documents_by_element[element_id] = documents
         scores = []
+        element_scores = {}
+        documents_retrieved = {}
+        unverified_elements = []
         closest = []
         for element in extracted["elements"]:
-            docs = documents_by_element[element["id"]][:10]
+            all_docs = documents_by_element[element["id"]]
+            docs = all_docs[:10]
+            documents_retrieved[element["id"]] = len(all_docs)
             if not docs:
-                scores.append(1.0)
+                unverified_elements.append(element["id"])
                 continue
             vectors, path = self.llm.embed(
                 [element["text"]] + [f'{doc.get("title", "")} {doc.get("abstract", "")}' for doc in docs],
@@ -62,29 +77,62 @@ class ResearchAgent:
             )
             if path:
                 llm_paths.append(path)
-            scores.append(element_novelty(vectors[0], vectors[1:]))
+            score = element_novelty(vectors[0], vectors[1:])
+            scores.append(score)
+            element_scores[element["id"]] = round(score, 6)
             for doc, vector in zip(docs, vectors[1:]):
                 enriched = dict(doc)
                 enriched["similarity"] = cosine(vectors[0], vector)
                 closest.append(enriched)
         closest.sort(key=lambda item: item.get("similarity", 0), reverse=True)
+        required = max(2, math.ceil(len(extracted["elements"]) / 2))
+        verified_count = len(extracted["elements"]) - len(unverified_elements)
+        if verified_count < required:
+            details = {
+                "documents_retrieved": documents_retrieved,
+                "unverified_elements": unverified_elements,
+                "verified_elements": verified_count,
+                "required_verified_elements": required,
+            }
+            raise EvidenceFailure(
+                "Insufficient literature evidence to calculate novelty: "
+                f"{verified_count} of {len(extracted['elements'])} elements verified",
+                details,
+            )
         rationale = self.llm.chat(
-            "Explain novelty using only the supplied document ids; cite ids verbatim.\n"
-            + str({"elements": extracted["elements"], "documents": closest[:10]}),
-            {"name": "novelty_rationale", "schema": {"type": "object", "required": ["rationale"], "properties": {"rationale": {"type": "string"}, "cited_ids": {"type": "array"}}}},
+            AUTONOMOUS_INSTRUCTION
+            + "Explain novelty using only the supplied document ids; cite ids verbatim.\n"
+            + json.dumps(
+                {"elements": extracted["elements"], "documents": closest[:10]},
+                indent=2,
+                sort_keys=True,
+            ),
+            {
+                "name": "novelty_rationale",
+                "schema": {
+                    "type": "object",
+                    "required": ["rationale", "cited_ids"],
+                    "properties": {
+                        "rationale": {"type": "string"},
+                        "cited_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                },
+            },
             agent="research_rationale",
         )
         path = getattr(self.llm, "last_log_path", None)
         if path:
             llm_paths.append(path)
-        valid_ids = {doc.get("id") for doc in closest}
         cited_ids = validate_citation_ids(rationale.get("cited_ids", []), closest)
         return {
             "novelty_score": novelty_score(scores),
-            "element_scores": {
-                element["id"]: round(score, 6)
-                for element, score in zip(extracted["elements"], scores)
-            },
+            "element_scores": element_scores,
+            "documents_retrieved": documents_retrieved,
+            "unverified_elements": unverified_elements,
+            "verified_elements": len(element_scores),
             "closest_publications": closest[:10],
             "rationale": rationale.get("rationale", ""),
             "cited_ids": cited_ids,

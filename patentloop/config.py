@@ -26,6 +26,9 @@ class Settings:
     embedding_model: str = field(default_factory=lambda: os.environ.get(
         "PATENTLOOP_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
     ))
+    model_cache: str | None = field(
+        default_factory=lambda: os.environ.get("PATENTLOOP_MODEL_CACHE")
+    )
     uspto_api_key: str | None = field(default_factory=lambda: os.environ.get("USPTO_ODP_API_KEY"))
     epo_key: str | None = field(default_factory=lambda: os.environ.get("EPO_OPS_KEY"))
     epo_secret: str | None = field(default_factory=lambda: os.environ.get("EPO_OPS_SECRET"))

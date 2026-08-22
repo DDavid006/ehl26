@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from reportlab.lib.pagesizes import LETTER
@@ -9,8 +10,25 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from . import AUTONOMOUS_INSTRUCTION
 
-DRAFT_SCHEMA = {"name": "draft_application", "schema": {"type": "object", "required": ["title", "field", "background", "summary", "detailed_description", "claims", "why_novel"], "properties": {key: {"type": "string"} for key in ("title", "field", "background", "summary", "detailed_description", "claims", "why_novel")}}}
+DRAFT_SCHEMA = {
+    "name": "draft_application",
+    "schema": {
+        "type": "object",
+        "required": [
+            "title", "field", "background", "summary",
+            "detailed_description", "claims", "why_novel",
+        ],
+        "properties": {
+            key: {"type": "string"}
+            for key in (
+                "title", "field", "background", "summary",
+                "detailed_description", "claims", "why_novel",
+            )
+        },
+    },
+}
 
 
 def render_pdf(markdown: str, path: Path) -> None:
@@ -29,8 +47,18 @@ class DraftingAgent:
 
     def run(self, idea_text: str, extracted: dict, research: dict, patents: dict, *, run_dir) -> dict:
         output = self.llm.chat(
-            "Write a complete provisional patent application draft. Include one independent and at least three dependent claims, and cite only supplied prior art.\n"
-            + str({"idea": idea_text, "extracted": extracted, "research": research, "patents": patents}),
+            AUTONOMOUS_INSTRUCTION
+            + "Write a complete provisional patent application draft. Include one independent and at least three dependent claims, and cite only supplied prior art.\n"
+            + json.dumps(
+                {
+                    "idea": idea_text,
+                    "extracted": extracted,
+                    "research": research,
+                    "patents": patents,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
             DRAFT_SCHEMA,
             agent="drafting",
         )

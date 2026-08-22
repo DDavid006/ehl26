@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -45,6 +46,8 @@ class DevinAgentBackend:
         self.last_session_id: str | None = None
         self.last_session_url: str | None = None
         self.last_log_path: str | None = None
+        self._log_sequence = 0
+        self._log_lock = threading.Lock()
 
     @staticmethod
     def _schema(schema: dict) -> dict:
@@ -95,13 +98,34 @@ class DevinAgentBackend:
             )
             started = time.monotonic()
             polls = []
+            nudges = []
             interval = self.poll_interval
             terminal = {"completed", "failed", "error", "stopped", "terminated", "cancelled"}
+            blocked = {
+                "blocked", "idle", "waiting", "awaiting_input",
+                "needs_input", "paused", "awaiting_user",
+                "waiting_for_user", "input_required",
+            }
+            nudged = False
             while True:
                 if time.monotonic() - started >= self.timeout_seconds:
-                    raise DevinBackendError(
+                    error = DevinBackendError(
                         f"Devin session {session_id} timed out after {self.timeout_seconds:g}s"
                     )
+                    self._record(
+                        title,
+                        {
+                            "backend": "devin",
+                            "session_id": session_id,
+                            "session_url": self.last_session_url,
+                            "request": body,
+                            "created_response": created,
+                            "poll_responses": polls,
+                            "nudges": nudges,
+                            "error": str(error),
+                        },
+                    )
+                    raise error
                 try:
                     poll_response = self.session.get(
                         f"{self.base_url}/session/{session_id}",
@@ -114,36 +138,165 @@ class DevinAgentBackend:
                     raise DevinBackendError(f"could not poll Devin session {session_id}: {exc}") from exc
                 polls.append(state)
                 status = str(state.get("status") or state.get("state") or "").lower()
+                if status in blocked:
+                    if nudged:
+                        error = DevinBackendError(
+                            f"Devin session {session_id} remained {status} after an autonomous nudge"
+                        )
+                        self._record(
+                            title,
+                            {
+                                "backend": "devin",
+                                "session_id": session_id,
+                                "session_url": self.last_session_url,
+                                "request": body,
+                                "created_response": created,
+                                "poll_responses": polls,
+                                "nudges": nudges,
+                                "error": str(error),
+                            },
+                        )
+                        raise error
+                    nudge = (
+                        "Proceed fully autonomously now. Do not ask for user input or "
+                        "confirmation; finish the task and emit the requested structured output."
+                    )
+                    try:
+                        nudge_response = self.session.post(
+                            f"{self.base_url}/session/{session_id}/message",
+                            headers=headers,
+                            json={"message": nudge},
+                            timeout=60,
+                        )
+                        nudge_response.raise_for_status()
+                        nudge_body = nudge_response.json()
+                    except (requests.RequestException, ValueError) as exc:
+                        error = DevinBackendError(
+                            f"Devin session {session_id} is {status}; autonomous nudge failed: {exc}"
+                        )
+                        self._record(
+                            title,
+                            {
+                                "backend": "devin",
+                                "session_id": session_id,
+                                "session_url": self.last_session_url,
+                                "request": body,
+                                "created_response": created,
+                                "poll_responses": polls,
+                                "nudges": nudges,
+                                "error": str(error),
+                            },
+                        )
+                        raise error from exc
+                    nudges.append({"status": status, "request": nudge, "response": nudge_body})
+                    nudged = True
+                    time.sleep(interval)
+                    interval = min(max(interval * 1.5, 0.1), 15.0)
+                    continue
                 if status in terminal:
                     if status != "completed":
-                        raise DevinBackendError(
+                        error = DevinBackendError(
                             f"Devin session {session_id} ended with status {status}"
                         )
+                        self._record(
+                            title,
+                            {
+                                "backend": "devin",
+                                "session_id": session_id,
+                                "session_url": self.last_session_url,
+                                "request": body,
+                                "created_response": created,
+                                "poll_responses": polls,
+                                "nudges": nudges,
+                                "error": str(error),
+                            },
+                        )
+                        raise error
                     output = state.get("structured_output")
                     if isinstance(output, str):
                         try:
                             output = json.loads(output)
                         except json.JSONDecodeError as exc:
-                            raise DevinBackendError("Devin structured_output was not JSON") from exc
+                            error = DevinBackendError(
+                                "Devin structured_output was not JSON"
+                            )
+                            self._record(
+                                title,
+                                {
+                                    "backend": "devin",
+                                    "session_id": session_id,
+                                    "session_url": self.last_session_url,
+                                    "request": body,
+                                    "created_response": created,
+                                    "poll_responses": polls,
+                                    "nudges": nudges,
+                                    "error": str(error),
+                                },
+                            )
+                            raise error from exc
                     if not isinstance(output, dict):
-                        raise DevinBackendError("Devin session completed without structured_output")
+                        error = DevinBackendError(
+                            "Devin session completed without structured_output"
+                        )
+                        self._record(
+                            title,
+                            {
+                                "backend": "devin",
+                                "session_id": session_id,
+                                "session_url": self.last_session_url,
+                                "request": body,
+                                "created_response": created,
+                                "poll_responses": polls,
+                                "nudges": nudges,
+                                "error": str(error),
+                            },
+                        )
+                        raise error
                     try:
                         validate(output, schema)
                     except Exception as exc:
-                        raise DevinBackendError(
+                        error = DevinBackendError(
                             f"Devin structured output failed schema validation: {exc}"
-                        ) from exc
-                    log_payload = {
+                        )
+                        self._record(
+                            title,
+                            {
+                                "backend": "devin",
+                                "session_id": session_id,
+                                "session_url": self.last_session_url,
+                                "request": body,
+                                "created_response": created,
+                                "poll_responses": polls,
+                                "nudges": nudges,
+                                "structured_output": output,
+                                "error": str(error),
+                            },
+                        )
+                        raise error from exc
+                    self._record(title, {
                         "backend": "devin",
                         "session_id": session_id,
                         "session_url": self.last_session_url,
                         "request": body,
                         "created_response": created,
                         "poll_responses": polls,
+                        "nudges": nudges,
                         "structured_output": output,
-                    }
-                    if self.log_callback:
-                        self.last_log_path = self.log_callback(title.replace(" ", "_"), log_payload)
+                    })
                     return output
                 time.sleep(interval)
                 interval = min(max(interval * 1.5, 0.1), 15.0)
+
+    def _record(self, title: str, payload: dict) -> None:
+        if self.log_callback:
+            self.last_log_path = self.log_callback(title.replace(" ", "_"), payload)
+            return
+        if self.run_dir is None:
+            return
+        with self._log_lock:
+            directory = self.run_dir / "llm"
+            directory.mkdir(parents=True, exist_ok=True)
+            self._log_sequence += 1
+            path = directory / f"{self._log_sequence:04d}_{title.replace(' ', '_')}.json"
+            path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
+            self.last_log_path = str(path)
