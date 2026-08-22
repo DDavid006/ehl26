@@ -14,9 +14,9 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from coverage import build_matrix
 from decompose import decompose_invention
 from examine import judge_patentability
+from judge import build_matrix
 from patent_client import search_patents
 from suggest import generate_revision, generate_suggestions
 

@@ -1,0 +1,158 @@
+{
+  "cases": [
+    {
+      "name": "scalp sunscreen foam",
+      "elements": [
+        {
+          "id": "E1",
+          "text": "a delivery format applied without rinsing",
+          "search_terms": ["leave-on formulation", "rinse free composition"]
+        },
+        {
+          "id": "E2",
+          "text": "an agent that attenuates ultraviolet radiation at the scalp",
+          "search_terms": ["ultraviolet filter", "sunscreen active"]
+        },
+        {
+          "id": "E3",
+          "text": "a carrier that spreads through dense hair to reach the skin",
+          "search_terms": ["scalp delivery vehicle", "hair penetrating carrier"]
+        },
+        {
+          "id": "E4",
+          "text": "a dispenser that meters a fixed dose per application",
+          "search_terms": ["metered dose dispenser", "dosing pump"]
+        }
+      ],
+      "patents": [
+        {
+          "patent_id": "US1111111",
+          "title": "Non-rinse photoprotective mousse for the hair-bearing scalp",
+          "abstract": "An aerated cosmetic product that remains on the head after use. The mousse carries a UV-absorbing compound and its low surface tension lets it migrate along hair shafts down to the underlying skin."
+        },
+        {
+          "patent_id": "US2222222",
+          "title": "Rinse-off shampoo with ultraviolet filter",
+          "abstract": "A cleansing shampoo containing an ultraviolet filter, applied to wet hair and rinsed away after lathering."
+        }
+      ],
+      "labels": {
+        "E1": {"US1111111": true, "US2222222": false},
+        "E2": {"US1111111": true, "US2222222": true},
+        "E3": {"US1111111": true, "US2222222": false},
+        "E4": {"US1111111": false, "US2222222": false}
+      }
+    },
+    {
+      "name": "battery cooling",
+      "elements": [
+        {
+          "id": "E1",
+          "text": "a sensor network that predicts thermal load per cell group",
+          "search_terms": ["thermal load prediction", "cell temperature sensor"]
+        },
+        {
+          "id": "E2",
+          "text": "valves that route coolant selectively to hot cell groups",
+          "search_terms": ["selective coolant routing", "coolant valve battery"]
+        },
+        {
+          "id": "E3",
+          "text": "a phase-change material buffer absorbing short heat spikes",
+          "search_terms": ["phase change material battery", "latent heat buffer"]
+        }
+      ],
+      "patents": [
+        {
+          "patent_id": "US3333333",
+          "title": "Adaptive thermal management for battery packs",
+          "abstract": "Systems for regulating pack temperature by directing liquid coolant through individual module branches according to forecast heat generation derived from per-module thermistors."
+        },
+        {
+          "patent_id": "US4444444",
+          "title": "Phase change ink composition for printing",
+          "abstract": "A phase change ink that is solid at room temperature and melts in the print head, comprising a wax matrix and colorant."
+        }
+      ],
+      "labels": {
+        "E1": {"US3333333": true, "US4444444": false},
+        "E2": {"US3333333": true, "US4444444": false},
+        "E3": {"US3333333": false, "US4444444": false}
+      }
+    },
+    {
+      "name": "network anomaly detection",
+      "elements": [
+        {
+          "id": "E1",
+          "text": "a model trained only on normal traffic, flagging deviations",
+          "search_terms": ["anomaly detection model", "nominal traffic baseline"]
+        },
+        {
+          "id": "E2",
+          "text": "an air-gapped update channel for detection rules",
+          "search_terms": ["air gapped update", "offline rule distribution"]
+        },
+        {
+          "id": "E3",
+          "text": "automatic isolation of a device that raises an alert",
+          "search_terms": ["automatic quarantine device", "network isolation response"]
+        }
+      ],
+      "patents": [
+        {
+          "patent_id": "US5555555",
+          "title": "Machine learning based anomaly detection in industrial control networks",
+          "abstract": "A monitoring system trains a model on nominal traffic patterns of an industrial control network and raises alerts when observed traffic deviates beyond a learned tolerance. Upon an alert the switch port of the offending controller is disabled."
+        },
+        {
+          "patent_id": "US6666666",
+          "title": "Traffic signal control model for road networks",
+          "abstract": "A model of vehicle traffic patterns used to time traffic signals, trained on nominal flows observed at intersections."
+        }
+      ],
+      "labels": {
+        "E1": {"US5555555": true, "US6666666": false},
+        "E2": {"US5555555": false, "US6666666": false},
+        "E3": {"US5555555": true, "US6666666": false}
+      }
+    },
+    {
+      "name": "compostable packaging film",
+      "elements": [
+        {
+          "id": "E1",
+          "text": "a starch-based matrix providing structural strength",
+          "search_terms": ["starch derived matrix", "biopolymer film strength"]
+        },
+        {
+          "id": "E2",
+          "text": "degradation under industrial composting within weeks",
+          "search_terms": ["industrial composting degradation", "compostable polymer"]
+        },
+        {
+          "id": "E3",
+          "text": "an oxygen barrier layer compatible with composting",
+          "search_terms": ["compostable oxygen barrier", "gas barrier biopolymer"]
+        }
+      ],
+      "patents": [
+        {
+          "patent_id": "US7777777",
+          "title": "Biodegradable polymer composition for single-use packaging",
+          "abstract": "A polymer composition comprising a starch-derived matrix and a plasticizer blend that provides mechanical strength comparable to polyethylene while degrading under industrial composting conditions."
+        },
+        {
+          "patent_id": "US8888888",
+          "title": "Oxygen barrier coating for PET bottles",
+          "abstract": "A silicon oxide barrier coating deposited on polyethylene terephthalate bottles to slow oxygen ingress into carbonated beverages."
+        }
+      ],
+      "labels": {
+        "E1": {"US7777777": true, "US8888888": false},
+        "E2": {"US7777777": true, "US8888888": false},
+        "E3": {"US7777777": false, "US8888888": false}
+      }
+    }
+  ]
+}
