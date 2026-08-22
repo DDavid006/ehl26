@@ -1,0 +1,14 @@
+You are a patent analyst. Break the invention below into between 4 and 8 distinct functional elements.
+
+Rules:
+- Each element must describe what that part of the invention DOES (its function or effect), not a restatement of a fragment of the input.
+  Bad: "a spray"
+  Good: "a delivery format applied without rinsing"
+- Give each element between 2 and 4 search terms suitable for a patent keyword search: short noun phrases, no boolean operators.
+- Ids are "E1", "E2", ... in order.
+
+Return JSON only. No prose, no explanation, no markdown code fences. The response must be a JSON array of objects with exactly these keys:
+[{"id": "E1", "text": "...", "search_terms": ["...", "..."]}]
+
+Invention description:
+A leave-on foam that delivers sunscreen to the scalp through dense hair via a metered applicator.
