@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patentability analyser</title>
+<style>
+  :root {
+    --gap: 16px;
+    --green: #12e02a;
+    --border: #d8dce3;
+    --ink: #1b1f24;
+    --muted: #5c6672;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 24px 64px;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #f7f8fa;
+  }
+  main { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lede { margin: 0 0 24px; color: var(--muted); }
+  textarea {
+    width: 100%;
+    min-height: 110px;
+    padding: 12px;
+    font: inherit;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    resize: vertical;
+    background: #fff;
+  }
+  .row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  button {
+    padding: 10px 18px;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: #1b64f2;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button[disabled] { background: #9bb4e8; cursor: progress; }
+  .status { color: var(--muted); }
+  .error { color: #b3261e; }
+  section { margin-top: 32px; }
+  h2 { font-size: 17px; margin: 0 0 12px; }
+  .legend { display: flex; gap: 16px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); vertical-align: -2px; margin-right: 6px; }
+  .swatch.green { background: var(--green); border-color: #0aa81c; }
+  .swatch.covered { background: #eceff3; }
+  .table-wrap { overflow-x: auto; background: #fff; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 10px 12px; text-align: left; vertical-align: top; }
+  th { background: #f2f4f7; font-size: 13px; font-weight: 600; }
+  th.element-head { min-width: 260px; position: sticky; left: 0; z-index: 1; }
+  td.element-cell { min-width: 260px; position: sticky; left: 0; background: #fff; z-index: 1; }
+  td.cell { text-align: center; font-size: 13px; cursor: default; }
+  td.cell.covered { background: #eceff3; color: var(--muted); }
+  td.cell.uncovered { background: var(--green); color: #05320b; font-weight: 700; }
+  tr.all-uncovered td.element-cell { box-shadow: inset 4px 0 0 var(--green); }
+  .eid { font-weight: 700; }
+  .etext { color: var(--muted); font-size: 13px; }
+  .terms { margin-top: 4px; font-size: 12px; color: var(--muted); }
+  .uncovered-summary { background: #fff; border: 1px solid var(--border); border-left: 6px solid var(--green); border-radius: 10px; padding: 14px 16px; }
+  .uncovered-summary strong { color: #05320b; }
+  .pill { display: inline-block; background: var(--green); color: #05320b; font-weight: 700; border-radius: 999px; padding: 2px 10px; margin: 2px 6px 2px 0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--gap); }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h3 { margin: 0 0 8px; font-size: 15px; }
+  .card .meta { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .tag { display: inline-block; border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; margin-right: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .patent-head a { color: inherit; }
+  .patent-head .sub { display: block; font-weight: 400; color: var(--muted); max-width: 220px; }
+  .verdict { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .verdict.allowed { border-left: 6px solid #0aa81c; }
+  .verdict.blocked { border-left: 6px solid #b3261e; }
+  .badge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700; }
+  .badge.allowed { background: #dff6e2; color: #05320b; }
+  .badge.blocked { background: #fbe4e2; color: #5c1512; }
+  .timeline { border-left: 2px solid var(--border); margin-left: 8px; padding-left: 20px; }
+  .step { position: relative; margin-bottom: var(--gap); background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .step::before { content: ""; position: absolute; left: -27px; top: 20px; width: 12px; height: 12px; border-radius: 50%; background: var(--border); }
+  .step.allowed::before { background: #0aa81c; }
+  .step.blocked::before { background: #b3261e; }
+  .step h3 { margin: 0 0 8px; font-size: 15px; }
+  .label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 12px; }
+  .quote { border-left: 3px solid var(--border); padding-left: 10px; color: var(--ink); }
+  .step details { margin-top: 12px; }
+  .step summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Patentability analyser</h1>
+  <p class="lede">Describe the invention. Elements are rows, prior-art references are columns; hover a filled cell to read the matching sentence. <strong>Bright green cells are gaps &mdash; nothing in the prior art covers them.</strong> An examiner judges each round; a rejected invention is revised and re-analysed up to three times.</p>
+
+  <textarea id="description" placeholder="A leave-on foam that delivers sunscreen to the scalp through dense hair without rinsing."></textarea>
+  <div class="row">
+    <button id="run">Analyse</button>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div id="results" hidden>
+    <section>
+      <h2>Examiner verdict</h2>
+      <div class="verdict" id="verdict"></div>
+    </section>
+
+    <section id="timeline-section" hidden>
+      <h2>Iterations</h2>
+      <div class="timeline" id="timeline"></div>
+    </section>
+
+    <section>
+      <h2>Coverage matrix</h2>
+      <div class="legend">
+        <span><span class="swatch green"></span>uncovered gap</span>
+        <span><span class="swatch covered"></span>covered by reference (hover for evidence)</span>
+      </div>
+      <div class="table-wrap"><table id="matrix"></table></div>
+    </section>
+
+    <section>
+      <h2>Uncovered elements</h2>
+      <div class="uncovered-summary" id="uncovered"></div>
+    </section>
+
+    <section>
+      <h2>Suggestions</h2>
+      <div class="cards" id="suggestions"></div>
+    </section>
+  </div>
+</main>
+<script>
+// location.origin drops any credentials embedded in the page URL, which fetch() rejects.
+// The streaming endpoint emits progress lines, which keeps proxies from timing out a long run.
+const API = window.location.origin + "/api/analyse/stream";
+const $ = (id) => document.getElementById(id);
+
+function patentUrl(id) {
+  return /^[A-Z]{2}/.test(id) ? `https://patents.google.com/patent/${id}` : null;
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value).replace(/[&<>"]/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]
+  ));
+}
+
+function renderMatrix(table, data) {
+  const elements = data.elements || [];
+  const patents = data.patents || [];
+  const coverage = data.coverage || {};
+  const uncovered = data.uncovered || [];
+  const patentIds = patents.map((p, i) => p.patent_id || `unknown-${i + 1}`);
+
+  table.innerHTML = "";
+  const thead = table.insertRow();
+  thead.insertCell().outerHTML = '<th class="element-head">Functional element</th>';
+  patents.forEach((patent, index) => {
+    const id = patentIds[index];
+    const url = patentUrl(id);
+    const label = url ? `<a href="${url}" target="_blank" rel="noreferrer">${id}</a>` : id;
+    const cell = document.createElement("th");
+    cell.className = "patent-head";
+    cell.innerHTML = `${label}<span class="sub">${patent.title || "untitled"}${patent.assignee ? " &mdash; " + patent.assignee : ""}</span>`;
+    thead.appendChild(cell);
+  });
+
+  elements.forEach((element, index) => {
+    const elementId = element.id || `E${index + 1}`;
+    const row = table.insertRow();
+    if (uncovered.includes(elementId)) row.className = "all-uncovered";
+    const head = row.insertCell();
+    head.className = "element-cell";
+    head.innerHTML = `<span class="eid">${elementId}</span> <span class="etext">${element.text || ""}</span>`
+      + (element.search_terms ? `<div class="terms">${element.search_terms.join(" &middot; ")}</div>` : "");
+    patentIds.forEach((patentId) => {
+      const cell = (coverage[elementId] || {})[patentId] || { covered: false, evidence: "" };
+      const td = row.insertCell();
+      td.className = "cell " + (cell.covered ? "covered" : "uncovered");
+      td.textContent = cell.covered ? "covered" : "GAP";
+      if (cell.covered && cell.evidence) td.title = cell.evidence;
+    });
+  });
+}
+
+function uncoveredSummary(data) {
+  const elements = data.elements || [];
+  const uncovered = data.uncovered || [];
+  return uncovered.length
+    ? `<strong>${uncovered.length} of ${elements.length} elements are not covered by any reference.</strong><div style="margin-top:8px">`
+      + uncovered.map((id) => {
+          const element = elements.find((e, i) => (e.id || `E${i + 1}`) === id) || {};
+          return `<span class="pill">${escapeHtml(id)}</span><span class="etext">${escapeHtml(element.text)}</span><br>`;
+        }).join("")
+      + "</div>"
+    : "<strong>Every element is covered by at least one reference.</strong>";
+}
+
+function renderTimeline(iterations) {
+  $("timeline-section").hidden = iterations.length === 0;
+  $("timeline").innerHTML = iterations.map((step) => {
+    const allowed = (step.verdict || {}).patentable;
+    const state = allowed ? "allowed" : "blocked";
+    return `
+      <div class="step ${state}">
+        <h3>Iteration ${step.iteration} <span class="badge ${state}">${allowed ? "patentable" : "not patentable"}</span></h3>
+        ${step.changes ? `<div class="label">What changed</div><div>${escapeHtml(step.changes)}</div>` : '<div class="label">Original description</div>'}
+        <div class="label">Description analysed</div>
+        <div class="quote">${escapeHtml(step.description)}</div>
+        <div class="label">Examiner reasoning</div>
+        <div>${escapeHtml((step.verdict || {}).reasoning)}</div>
+        <details>
+          <summary>Coverage matrix for this iteration</summary>
+          <div class="uncovered-summary" style="margin-top:12px">${uncoveredSummary(step)}</div>
+          <div class="table-wrap" style="margin-top:12px"><table></table></div>
+        </details>
+      </div>`;
+  }).join("");
+
+  $("timeline").querySelectorAll(".step details table").forEach((table, index) => {
+    renderMatrix(table, iterations[index]);
+  });
+}
+
+function render(data) {
+  renderMatrix($("matrix"), data);
+
+  const verdict = data.verdict || {};
+  const state = verdict.patentable ? "allowed" : "blocked";
+  const iterations = data.iterations || [];
+  $("verdict").className = `verdict ${state}`;
+  $("verdict").innerHTML =
+    `<span class="badge ${state}">${verdict.patentable ? "patentable" : "not patentable"}</span>`
+    + ` <span class="etext">after ${iterations.length || 1} iteration${iterations.length === 1 ? "" : "s"}</span>`
+    + `<div style="margin-top:8px">${escapeHtml(verdict.reasoning)}</div>`
+    + (iterations.length > 1
+        ? `<div class="label" style="margin-top:12px">Final revised description</div><div class="quote">${escapeHtml(data.description)}</div>`
+        : "");
+
+  renderTimeline(iterations);
+
+  const summary = $("uncovered");
+  summary.innerHTML = uncoveredSummary(data);
+
+  $("suggestions").innerHTML = (data.suggestions || []).map((suggestion) => `
+    <div class="card">
+      <h3>${suggestion.title || ""}</h3>
+      <div>${suggestion.reasoning || ""}</div>
+      <div class="meta"><span class="tag">${suggestion.element_id || "?"}</span><span class="tag">${suggestion.reference || "?"}</span></div>
+    </div>`).join("") || '<div class="card">No suggestions returned.</div>';
+
+  $("results").hidden = false;
+}
+
+async function analyse() {
+  const description = $("description").value.trim();
+  const status = $("status");
+  if (!description) {
+    status.className = "status error";
+    status.textContent = "Enter a description first.";
+    return;
+  }
+  $("run").disabled = true;
+  status.className = "status";
+  const started = Date.now();
+  let stage = "starting";
+  const tick = setInterval(() => {
+    status.textContent = `Analysing… ${Math.round((Date.now() - started) / 1000)}s — ${stage}`;
+  }, 500);
+  try {
+    const response = await fetch(API, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description }),
+    });
+    if (!response.ok || !response.body) {
+      const raw = await response.text();
+      let detail = raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+      try { detail = JSON.parse(raw).detail || detail; } catch (_) { /* HTML proxy error */ }
+      throw new Error(`HTTP ${response.status}: ${detail || "no response body"}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result = null;
+    let failure = null;
+    while (!result && !failure) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.event === "progress") stage = event.stage;
+        else if (event.event === "result") result = event.result;
+        else if (event.event === "error") failure = event.detail;
+      }
+    }
+    if (failure) throw new Error(failure);
+    if (!result) throw new Error("the analysis stream ended without a result");
+    render(result);
+    status.textContent = `Done in ${Math.round((Date.now() - started) / 1000)}s.`;
+  } catch (error) {
+    status.className = "status error";
+    status.textContent = String(error.message || error);
+  } finally {
+    clearInterval(tick);
+    $("run").disabled = false;
+  }
+}
+
+$("run").addEventListener("click", analyse);
+</script>
+</body>
+</html>
