@@ -167,6 +167,7 @@
     color: var(--red); text-shadow: 0 0 16px rgba(255,77,109,.6);
   }
   #summary { margin-top: 10px; font-size: 14px; line-height: 1.6; }
+  #summary p + p { margin-top: 8px; }
   .links { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
   .links a {
     color: var(--cyan); border: 1px solid var(--line); border-radius: 6px;
@@ -355,6 +356,13 @@ function coverageTable(ev) {
 }
 
 let cards = {};
+let lastDecision = null;
+
+const STATUS_LABELS = {
+  DRAFTED: 'Patent draft ready',
+  KILLED_SATURATED: 'Stopped — field already patented',
+  KILLED_INFEASIBLE: 'Stopped — idea not feasible'
+};
 
 function memoryCard(ev) {
   const block = el('div', 'iteration');
@@ -467,6 +475,7 @@ function handle(ev) {
       break;
     }
     case 'decision':
+      lastDecision = ev;
       decisionCard(ev);
       break;
     case 'pivot':
@@ -492,9 +501,10 @@ function handle(ev) {
         setAgent('draft', 'done');
         if (cards.draft) setBadge(cards.draft.badge, 'done', 'drafted');
       }
-      const { box, badge } = card(ev.status === 'DRAFTED' ? 'draft' : 'gate', 'Loop terminated');
-      setBadge(badge, ev.status === 'DRAFTED' ? 'pass' : 'fail', ev.status);
-      if (ev.kill_reason) box.appendChild(el('div', 'reason', ev.kill_reason));
+      const { box, badge } = card(ev.status === 'DRAFTED' ? 'draft' : 'gate', 'Run finished');
+      setBadge(badge, ev.status === 'DRAFTED' ? 'pass' : 'fail',
+               ev.status === 'DRAFTED' ? 'drafted' : 'stopped');
+      box.appendChild(el('div', 'summary-text', STATUS_LABELS[ev.status] || ev.status));
       break;
     }
     case 'result': showResult(ev); break;
@@ -512,19 +522,24 @@ function handle(ev) {
 function showResult(ev) {
   $('result').classList.remove('hidden');
   const v = $('verdict');
-  v.textContent = ev.status;
+  v.textContent = STATUS_LABELS[ev.status] || ev.status;
   v.className = 'verdict ' + ev.status;
   const summaries = {
-    DRAFTED: 'The idea survived every gate: novelty confirmed against live literature, no blocking claim overlap found at the USPTO, and the feasibility gate passed. A provisional patent application draft has been generated.',
-    KILLED_SATURATED: 'The loop pivoted through variants but claim overlap with existing patents stayed high and the pivot space converged — the field is saturated.',
-    KILLED_INFEASIBLE: 'The feasibility gate rejected the idea: it is either not technically doable or too broadly scoped to support a real patent claim.'
+    DRAFTED: 'The idea survived every gate: it is new compared to published research, no existing patent blocks it, and it passed the feasibility check. A provisional patent application draft has been generated — download it below.',
+    KILLED_SATURATED: 'The idea (and its pivoted variants) collides too much with patents that already exist — this area is already heavily patented, so filing would likely be rejected or blocked.',
+    KILLED_INFEASIBLE: 'The idea failed the feasibility check — it is either not technically buildable as described, or too vague/broad to support a concrete patent claim.'
   };
-  let text = summaries[ev.status] || '';
-  if (ev.kill_reason) text += ' ' + ev.kill_reason;
-  if (ev.lineage && ev.lineage.length > 1) {
-    text += ` The idea evolved through ${ev.lineage.length} versions during the run.`;
+  const parts = [summaries[ev.status] || ''];
+  if (lastDecision && lastDecision.summary) {
+    parts.push('Why: ' + lastDecision.summary);
+  } else if (ev.kill_reason) {
+    parts.push('Why: ' + ev.kill_reason);
   }
-  $('summary').textContent = text;
+  if (ev.lineage && ev.lineage.length > 1) {
+    parts.push(`The idea was reworked ${ev.lineage.length - 1} time(s) during the run trying to find patentable space.`);
+  }
+  $('summary').innerHTML = '';
+  parts.filter(Boolean).forEach(p => $('summary').appendChild(el('p', '', p)));
   const links = $('links');
   links.innerHTML = '';
   const files = ['report.md', 'prior_art.json', 'trace.json'];
@@ -547,6 +562,7 @@ $('go').addEventListener('click', async () => {
   $('timeline').innerHTML = '';
   currentIteration = null;
   cards = {};
+  lastDecision = null;
   resetAgents();
   try {
     const response = await fetch('/api/run', {
