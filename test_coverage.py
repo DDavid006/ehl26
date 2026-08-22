@@ -101,18 +101,42 @@ def test_empty_elements_yield_empty_coverage():
     assert matrix["uncovered"] == []
 
 
-def test_matching_ignores_case_punctuation_and_plurals():
-    element = {"id": "E1", "search_terms": ["aerated carrier matrix"]}
+def test_matching_ignores_case_and_word_endings():
+    element = {"id": "E1", "search_terms": ["load cell"]}
     patent = {
         "patent_id": "US1",
-        "title": "Aerated Carriers: Matrix for topical delivery",
+        "title": "Load Cells for weighing vessels",
         "abstract": None,
     }
 
     covered, evidence = is_covered(element, patent)
 
     assert covered is True
-    assert evidence == "Aerated Carriers: Matrix for topical delivery"
+    assert evidence == "Load Cells for weighing vessels"
+
+
+def test_matching_reduces_words_to_their_stem():
+    element = {"id": "E1", "search_terms": ["temperature sensor"]}
+    patent = {"patent_id": "US1", "title": "Temperature sensing system", "abstract": None}
+
+    assert is_covered(element, patent) == (True, "Temperature sensing system")
+
+
+def test_matching_ignores_filler_words_in_the_term():
+    element = {"id": "E1", "search_terms": ["reminder system"]}
+    patent = {"patent_id": "US1", "title": "Smart reminder for drinking liquids", "abstract": None}
+
+    assert is_covered(element, patent) == (True, "Smart reminder for drinking liquids")
+
+
+def test_a_single_matching_term_is_enough():
+    element = {"id": "E1", "search_terms": ["hydration reminder", "load cell", "uv sterilisation"]}
+    patent = {"patent_id": "US1", "title": "Vessel", "abstract": "A load cell in the base."}
+
+    covered, evidence = is_covered(element, patent)
+
+    assert covered is True
+    assert evidence == "A load cell in the base."
 
 
 def test_partial_term_overlap_is_not_a_match():

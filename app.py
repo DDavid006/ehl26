@@ -6,7 +6,7 @@ import json
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,11 +17,10 @@ from pydantic import BaseModel, Field
 from coverage import build_matrix
 from decompose import decompose_invention
 from examine import judge_patentability
-from patent_client import search_patents
+from searcher import find_prior_art
 from suggest import generate_revision, generate_suggestions
 
 FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
-PATENTS_PER_ELEMENT = 3
 MAX_ITERATIONS = 3
 HEARTBEAT_SECONDS = 2.0
 MATRIX_KEYS = ("elements", "patents", "coverage", "uncovered")
@@ -63,23 +62,30 @@ def _upstream_message(exc: Exception) -> str:
     return text[0] if text else exc.__class__.__name__
 
 
-def _collect_patents(elements: list[dict]) -> list[dict]:
-    queries = []
-    for element in elements:
-        query = " ".join(element.get("search_terms") or []) or element.get("text") or ""
-        if query.strip():
-            queries.append(query)
-    if not queries:
+def _collect_patents(
+    elements: list[dict], note: Callable[[str], None] = lambda stage: None
+) -> list[dict]:
+    """Run one searcher agent per element concurrently and dedupe what they found."""
+    if not elements:
         return []
 
-    with ThreadPoolExecutor(max_workers=min(len(queries), 8)) as pool:
-        per_query = list(
-            pool.map(lambda query: search_patents(query, limit=PATENTS_PER_ELEMENT), queries)
-        )
+    def report(element_id: str) -> Callable[[str, dict], None]:
+        def on_tool_call(name: str, arguments: dict) -> None:
+            query = arguments.get("query")
+            if isinstance(query, str) and query.strip():
+                note(f"{element_id} searcher: {query.strip()}")
+
+        return on_tool_call
+
+    def search(element: dict) -> list[dict]:
+        return find_prior_art(element, on_tool_call=report(str(element.get("id") or "element")))
+
+    with ThreadPoolExecutor(max_workers=min(len(elements), 8)) as pool:
+        per_element = list(pool.map(search, elements))
 
     patents: list[dict] = []
     seen: set[str] = set()
-    for results in per_query:
+    for results in per_element:
         for patent in results:
             key = patent.get("patent_id") or patent.get("title")
             if not key or key in seen:
@@ -102,23 +108,35 @@ def _run_pipeline(description: str, progress: "queue.Queue[str] | None" = None) 
             status_code=502, detail=f"decomposition failed: {_upstream_message(exc)}"
         ) from exc
 
-    note(f"searching prior art for {len(elements)} elements")
-    patents = _collect_patents(elements)
+    note(f"dispatching {len(elements)} prior-art searcher agents")
+    patents = _collect_patents(elements, note)
 
     note(f"building the coverage matrix over {len(patents)} references")
     matrix = build_matrix(elements, patents)
 
-    note("generating patentability suggestions")
+    note("the suggester is checking directions against the prior art")
+
+    def suggester_search(name: str, arguments: dict) -> None:
+        query = arguments.get("query")
+        if isinstance(query, str) and query.strip():
+            note(f"suggester search: {query.strip()}")
+
     try:
-        suggestions = generate_suggestions(matrix, description)
+        suggestions = generate_suggestions(matrix, description, on_tool_call=suggester_search)
     except Exception as exc:
         raise HTTPException(
             status_code=502, detail=f"suggestion failed: {_upstream_message(exc)}"
         ) from exc
 
-    note("asking the examiner for a verdict")
+    note("the examiner is reviewing and running its own searches")
+
+    def examiner_search(name: str, arguments: dict) -> None:
+        query = arguments.get("query")
+        if isinstance(query, str) and query.strip():
+            note(f"examiner search: {query.strip()}")
+
     try:
-        verdict = judge_patentability(matrix, description)
+        verdict = judge_patentability(matrix, description, on_tool_call=examiner_search)
     except Exception as exc:
         raise HTTPException(
             status_code=502, detail=f"examination failed: {_upstream_message(exc)}"

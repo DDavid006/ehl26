@@ -140,6 +140,7 @@
     backdrop-filter: blur(14px);
     box-shadow: 0 20px 60px rgba(0, 0, 0, .45);
   }
+
   table { border-collapse: collapse; width: 100%; }
   th, td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 11px 14px; text-align: left; vertical-align: top; }
   th {
@@ -209,6 +210,11 @@
     color: var(--cyan);
     background: rgba(34, 211, 238, .08);
   }
+  .card .searches { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .card .searches summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  .card .search { margin-top: 8px; font-size: 12px; }
+  .card .search .q { font-family: var(--mono); color: var(--cyan); }
+  .card .search .found { color: var(--muted); }
   .patent-head a { color: var(--cyan); text-decoration: none; border-bottom: 1px dashed rgba(34, 211, 238, .5); }
   .patent-head a:hover { text-shadow: 0 0 12px rgba(34, 211, 238, .6); }
   .patent-head .sub { display: block; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); max-width: 220px; }
@@ -272,13 +278,18 @@
 <body>
 <main>
   <h1>Patentability analyser</h1>
-  <p class="lede">Describe the invention. Elements are rows, prior-art references are columns; hover a filled cell to read the matching sentence. <strong>Bright green cells are gaps &mdash; nothing in the prior art covers them.</strong> An examiner judges each round; a rejected invention is revised and re-analysed up to three times.</p>
+  <p class="lede">Describe the invention. Elements are rows, prior-art references are columns; hover a filled cell to read the matching sentence. <strong>Bright green cells are gaps &mdash; nothing in the prior art covers them.</strong> An examiner judges each round; a rejected invention is revised and re-analysed up to three times. Each element gets its own searcher agent, the suggester searches before it commits to a direction, and the examiner runs its own follow-up searches &mdash; all of them are logged below as they work.</p>
 
   <textarea id="description" placeholder="A leave-on foam that delivers sunscreen to the scalp through dense hair without rinsing."></textarea>
   <div class="row">
     <button id="run">Analyse</button>
     <span class="status" id="status"></span>
   </div>
+
+  <section id="activity-section" hidden>
+    <h2>Agent activity</h2>
+    <ol class="activity" id="activity"></ol>
+  </section>
 
   <div id="results" hidden>
     <section>
@@ -319,6 +330,16 @@ const $ = (id) => document.getElementById(id);
 
 function patentUrl(id) {
   return /^[A-Z]{2}/.test(id) ? `https://patents.google.com/patent/${id}` : null;
+}
+
+function searchTrail(searches) {
+  if (!searches || !searches.length) return "";
+  const rows = searches.map((search) => `
+    <div class="search">
+      <div class="q">${escapeHtml(search.query)}</div>
+      <div class="found">${escapeHtml(search.finding)}${(search.results || []).length ? ` &middot; ${escapeHtml((search.results || []).join(", "))}` : ""}</div>
+    </div>`).join("");
+  return `<details class="searches"><summary>${searches.length} search${searches.length === 1 ? "" : "es"} run to check this direction</summary>${rows}</details>`;
 }
 
 function escapeHtml(value) {
@@ -429,9 +450,22 @@ function render(data) {
       <h3>${suggestion.title || ""}</h3>
       <div>${suggestion.reasoning || ""}</div>
       <div class="meta"><span class="tag">${suggestion.element_id || "?"}</span><span class="tag">${suggestion.reference || "?"}</span></div>
+      ${searchTrail(suggestion.searches)}
     </div>`).join("") || '<div class="card">No suggestions returned.</div>';
 
   $("results").hidden = false;
+}
+
+let lastActivity = "";
+
+// The stream repeats the current stage on every heartbeat, so only log changes.
+function logActivity(stage) {
+  if (!stage || stage === lastActivity) return;
+  lastActivity = stage;
+  const item = document.createElement("li");
+  item.textContent = stage;
+  $("activity").appendChild(item);
+  $("activity").scrollTop = $("activity").scrollHeight;
 }
 
 async function analyse() {
@@ -444,6 +478,9 @@ async function analyse() {
   }
   $("run").disabled = true;
   status.className = "status";
+  $("activity").innerHTML = "";
+  $("activity-section").hidden = false;
+  lastActivity = "";
   const started = Date.now();
   let stage = "starting";
   const tick = setInterval(() => {
@@ -477,7 +514,7 @@ async function analyse() {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.event === "progress") stage = event.stage;
+        if (event.event === "progress") { stage = event.stage; logActivity(event.stage); }
         else if (event.event === "result") result = event.result;
         else if (event.event === "error") failure = event.detail;
       }

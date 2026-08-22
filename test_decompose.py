@@ -13,22 +13,22 @@ VALID_ELEMENTS = [
     {
         "id": "E1",
         "text": "a delivery format applied without rinsing",
-        "search_terms": ["leave-on formulation", "no-rinse topical"],
+        "search_terms": ["leave-on formulation", "no-rinse topical", "topical foam", "cosmetic composition"],
     },
     {
         "id": "E2",
         "text": "a carrier that spreads through dense hair to reach the skin surface",
-        "search_terms": ["scalp delivery vehicle", "hair penetrating carrier"],
+        "search_terms": ["scalp delivery vehicle", "hair penetrating carrier", "topical carrier", "skin penetration"],
     },
     {
         "id": "E3",
         "text": "an agent that attenuates ultraviolet radiation at the scalp",
-        "search_terms": ["ultraviolet filter", "sunscreen active"],
+        "search_terms": ["ultraviolet filter", "sunscreen active", "uv absorber", "photoprotection"],
     },
     {
         "id": "E4",
         "text": "a texture that avoids leaving visible residue on hair",
-        "search_terms": ["non-greasy composition", "residue free cosmetic"],
+        "search_terms": ["non-greasy composition", "residue free cosmetic", "hair feel", "cosmetic texture"],
     },
 ]
 
@@ -74,6 +74,28 @@ def test_parses_plain_json(monkeypatch):
     assert len(model.prompts) == 1
     assert DESCRIPTION in model.prompts[0]
     assert "JSON only" in model.prompts[0]
+
+
+def test_prompt_forbids_inventing_specifics(monkeypatch):
+    model = install_model(monkeypatch, json.dumps(VALID_ELEMENTS))
+
+    decompose_invention(DESCRIPTION)
+
+    prompt = model.prompts[0]
+    assert "Do not add specificity that is not present in the source text." in prompt
+    assert "Never invent numerical values" in prompt
+    assert "mutually consistent" in prompt
+
+
+def test_prompt_asks_for_concise_text_and_patent_vocabulary_terms(monkeypatch):
+    model = install_model(monkeypatch, json.dumps(VALID_ELEMENTS))
+
+    decompose_invention(DESCRIPTION)
+
+    prompt = model.prompts[0]
+    assert 'Keep "text" to one short clause' in prompt
+    assert "between 4 and 6 search terms" in prompt
+    assert "load cell" in prompt
 
 
 def test_falls_through_to_the_next_model_when_quota_is_spent(monkeypatch):
@@ -173,14 +195,14 @@ def test_truncates_extra_search_terms_and_fills_missing_id(monkeypatch):
     raw = [dict(element) for element in VALID_ELEMENTS]
     raw[0] = {
         "text": "a delivery format applied without rinsing",
-        "search_terms": ["a", "b", "c", "d", "e", "b"],
+        "search_terms": ["a", "b", "c", "d", "e", "f", "g", "b"],
     }
     install_model(monkeypatch, json.dumps(raw))
 
     elements = decompose_invention(DESCRIPTION)
 
     assert elements[0]["id"] == "E1"
-    assert elements[0]["search_terms"] == ["a", "b", "c", "d"]
+    assert elements[0]["search_terms"] == ["a", "b", "c", "d", "e", "f"]
 
 
 def test_rejects_payload_without_array(monkeypatch):

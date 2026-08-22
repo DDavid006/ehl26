@@ -5,47 +5,27 @@ from __future__ import annotations
 import re
 from typing import Any
 
-STOPWORDS = frozenset(
+SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+|\n+")
+WORD = re.compile(r"[a-z0-9]+")
+SUFFIXES = ("ization", "isation", "ations", "ation", "ings", "ing", "ers", "er", "ors", "or", "ion", "es", "ed", "s")
+GENERIC = frozenset(
     {
-        "a",
-        "an",
-        "and",
-        "as",
-        "at",
-        "based",
-        "by",
-        "for",
-        "from",
-        "in",
-        "into",
-        "of",
-        "on",
-        "or",
-        "the",
-        "that",
-        "to",
-        "with",
-        "without",
+        "a", "an", "and", "the", "of", "for", "with", "in", "on", "to", "by", "based", "using",
+        "system", "systems", "device", "devices", "apparatus", "method", "methods", "assembly",
+        "unit", "units", "module", "modules",
     }
 )
 
-SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+|\n+")
-WORD = re.compile(r"[a-z0-9]+")
 
-
-def _normalize_word(word: str) -> str:
-    if len(word) > 3 and word.endswith("ies"):
-        return word[:-3] + "y"
-    if len(word) > 3 and word.endswith("es"):
-        return word[:-2]
-    if len(word) > 3 and word.endswith("s"):
-        return word[:-1]
+def _stem(word: str) -> str:
+    for suffix in SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
     return word
 
 
-def _keywords(text: str) -> list[str]:
-    words = [_normalize_word(word) for word in WORD.findall(text.lower())]
-    return [word for word in words if word not in STOPWORDS and len(word) > 1]
+def _stems(text: str) -> list[str]:
+    return [_stem(word) for word in WORD.findall(text.lower())]
 
 
 def _sentences(patent: dict) -> list[str]:
@@ -62,23 +42,24 @@ def _sentences(patent: dict) -> list[str]:
 def is_covered(element: dict, patent: dict) -> tuple[bool, str]:
     """Return whether ``patent`` covers ``element`` and the sentence evidencing it.
 
-    Matching is keyword overlap: a search term matches a sentence of the patent
-    title or abstract when every significant word of the term appears in that
-    sentence. The evidence is the first matching sentence, or an empty string
-    when there is no match.
+    A patent covers the element when any one of its search terms is present in
+    the title or abstract. Matching is case-insensitive, order-independent and
+    partial: words count as equal once reduced to their stem, so "temperature
+    sensor" matches "temperature sensing" and "load cell" matches "load cells",
+    and filler words like "system" or "device" are ignored. The evidence is the
+    first matching sentence, or an empty string when there is no match.
     """
-    terms = element.get("search_terms") or []
-    sentences = _sentences(patent)
-    if not sentences:
-        return False, ""
+    terms = [
+        [stem for stem in _stems(term) if stem not in GENERIC]
+        for term in element.get("search_terms") or []
+        if isinstance(term, str)
+    ]
+    terms = [term for term in terms if term]
 
-    for sentence in sentences:
-        sentence_words = set(_keywords(sentence))
+    for sentence in _sentences(patent):
+        words = set(_stems(sentence))
         for term in terms:
-            if not isinstance(term, str):
-                continue
-            term_words = _keywords(term)
-            if term_words and set(term_words) <= sentence_words:
+            if set(term) <= words:
                 return True, sentence
     return False, ""
 

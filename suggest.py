@@ -1,20 +1,41 @@
-"""Generate patentability suggestions from a coverage matrix using Gemini."""
+"""Generate patentability suggestions from a coverage matrix.
+
+The suggester runs as an agent: before it proposes a direction it searches the
+prior art itself, and the searches it ran are returned with each suggestion.
+"""
 
 from __future__ import annotations
 
 import json
-from typing import Any
+import re
+from typing import Any, Callable, Optional
 
 from dotenv import load_dotenv
 
+from agents import Tool, run_agent
 from decompose import extract_json_array, extract_json_object, generate_text, strip_fences
+from patent_client import search_patents
 
 load_dotenv()
 
 MIN_SUGGESTIONS = 2
 MAX_SUGGESTIONS = 3
 SUGGESTION_KEYS = ("title", "reasoning", "element_id", "reference")
+SEARCH_KEYS = ("query", "finding")
 REVISION_KEYS = ("description", "changes")
+SEARCH_LIMIT = 5
+SEARCH_BUDGET = 6
+
+SEARCH_TOOL_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": "Keywords to search prior art for, as a practitioner would phrase them.",
+        }
+    },
+    "required": ["query"],
+}
 
 REVISION_PROMPT_TEMPLATE = """You are a patent attorney rewriting an invention so it can be \
 allowed over the prior art found for it.
@@ -69,12 +90,24 @@ patent reference id from the matrix ("reference").
 - Be specific. Vague advice such as "add more detail" or "consider narrowing the claims" is \
 useless; specificity is the entire point.
 
+Do not propose a direction you have not checked. Call search_prior_art first, with the wording \
+a practitioner would use for the modification you have in mind, and read what comes back:
+- If the search turns up art that already discloses that direction, it is blocked. Drop it and \
+try a different direction, searching again.
+- Only keep a direction whose searches came back clear of blocking art.
+- You have at most {budget} searches in total, so spend them on the directions you are \
+seriously considering.
+- Report the searches behind each suggestion in its "searches" list: the query exactly as you \
+passed it, and in "finding" what came back and why it does or does not block the direction. \
+Only list queries you actually ran.
+
 Allowed element ids: {element_ids}
 Allowed patent references: {patent_ids}
 
 Return JSON only. No prose, no explanation, no markdown code fences. A JSON array of objects \
 with exactly these keys:
-[{{"title": "...", "reasoning": "...", "element_id": "E3", "reference": "US1234567"}}]"""
+[{{"title": "...", "reasoning": "...", "element_id": "E3", "reference": "US1234567", \
+"searches": [{{"query": "...", "finding": "..."}}]}}]"""
 
 
 class SuggestionError(ValueError):
@@ -102,8 +135,45 @@ def _matrix_ids(matrix: dict) -> tuple[list[str], list[str]]:
     return element_ids, patent_ids
 
 
+def _normalise_query(query: str) -> str:
+    return re.sub(r"\s+", " ", query).strip().lower()
+
+
+def _coerce_searches(raw: Any, index: int, executed: dict[str, list[str]]) -> list[dict]:
+    """Return the searches a suggestion cites, rejecting any it did not run."""
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise SuggestionError(f"suggestion {index} has a non-list 'searches'")
+
+    searches: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise SuggestionError(f"suggestion {index} has a search that is not an object")
+        values: dict[str, str] = {}
+        for key in SEARCH_KEYS:
+            value = item.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise SuggestionError(f"suggestion {index} has a search with no {key}")
+            values[key] = value.strip()
+        normalised = _normalise_query(values["query"])
+        if executed and normalised not in executed:
+            raise SuggestionError(
+                f"suggestion {index} cites the query {values['query']!r}, which it never ran"
+            )
+        searches.append({**values, "results": executed.get(normalised, [])})
+
+    if executed and not searches:
+        raise SuggestionError(f"suggestion {index} lists no searches supporting it")
+    return searches
+
+
 def _coerce_suggestion(
-    raw: Any, index: int, element_ids: list[str], patent_ids: list[str]
+    raw: Any,
+    index: int,
+    element_ids: list[str],
+    patent_ids: list[str],
+    executed: dict[str, list[str]],
 ) -> dict:
     if not isinstance(raw, dict):
         raise SuggestionError(f"suggestion {index} is not an object")
@@ -121,10 +191,13 @@ def _coerce_suggestion(
         raise SuggestionError(
             f"suggestion {index} references unknown patent {values['reference']!r}"
         )
-    return {key: values[key] for key in SUGGESTION_KEYS}
+    searches = _coerce_searches(raw.get("searches"), index, executed)
+    return {**{key: values[key] for key in SUGGESTION_KEYS}, "searches": searches}
 
 
-def _parse_response(text: str, element_ids: list[str], patent_ids: list[str]) -> list[dict]:
+def _parse_response(
+    text: str, element_ids: list[str], patent_ids: list[str], executed: dict[str, list[str]]
+) -> list[dict]:
     if not isinstance(text, str) or not text.strip():
         raise SuggestionError("empty model response")
     try:
@@ -138,7 +211,7 @@ def _parse_response(text: str, element_ids: list[str], patent_ids: list[str]) ->
     if not isinstance(data, list):
         raise SuggestionError("model response is not a JSON array")
     suggestions = [
-        _coerce_suggestion(raw, index, element_ids, patent_ids)
+        _coerce_suggestion(raw, index, element_ids, patent_ids, executed)
         for index, raw in enumerate(data)
     ]
     if not MIN_SUGGESTIONS <= len(suggestions) <= MAX_SUGGESTIONS:
@@ -148,25 +221,30 @@ def _parse_response(text: str, element_ids: list[str], patent_ids: list[str]) ->
     return suggestions
 
 
-def _generate(matrix: dict, description: str, element_ids: list[str], patent_ids: list[str]) -> str:
-    return generate_text(
-        PROMPT_TEMPLATE.format(
-            description=description.strip(),
-            matrix=json.dumps(matrix, default=str, separators=(",", ":")),
-            min_suggestions=MIN_SUGGESTIONS,
-            max_suggestions=MAX_SUGGESTIONS,
-            element_ids=", ".join(element_ids) or "none",
-            patent_ids=", ".join(patent_ids) or "none",
-        ),
-        SuggestionError,
+def _prompt(matrix: dict, description: str, element_ids: list[str], patent_ids: list[str]) -> str:
+    return PROMPT_TEMPLATE.format(
+        description=description.strip(),
+        matrix=json.dumps(matrix, default=str, separators=(",", ":")),
+        min_suggestions=MIN_SUGGESTIONS,
+        max_suggestions=MAX_SUGGESTIONS,
+        element_ids=", ".join(element_ids) or "none",
+        patent_ids=", ".join(patent_ids) or "none",
+        budget=SEARCH_BUDGET,
     )
 
 
-def generate_suggestions(matrix: dict, description: str) -> list[dict]:
+def generate_suggestions(
+    matrix: dict,
+    description: str,
+    on_tool_call: Optional[Callable[[str, dict], None]] = None,
+) -> list[dict]:
     """Return 2-3 grounded patentability suggestions for ``matrix``.
 
-    Retries once if the model response cannot be parsed, then raises
-    :class:`SuggestionError`.
+    The suggester runs as an agent: it calls ``search_prior_art`` to check each
+    direction against real art before proposing it, and every suggestion carries
+    the searches behind it in ``searches``. A suggestion citing a query the agent
+    never ran is rejected. Retries once if the response cannot be parsed, then
+    raises :class:`SuggestionError`.
     """
     if not isinstance(matrix, dict) or not matrix:
         raise SuggestionError("matrix must be a non-empty dict")
@@ -174,14 +252,36 @@ def generate_suggestions(matrix: dict, description: str) -> list[dict]:
         raise SuggestionError("description must not be empty")
 
     element_ids, patent_ids = _matrix_ids(matrix)
+    prompt = _prompt(matrix, description, element_ids, patent_ids)
     last_error: SuggestionError | None = None
     for _ in range(2):
+        executed: dict[str, list[str]] = {}
+
+        def search(query: str) -> list[dict]:
+            results = search_patents(query, limit=SEARCH_LIMIT)
+            executed[_normalise_query(query)] = [
+                str(result.get("patent_id") or result.get("title") or "") for result in results
+            ]
+            return results
+
+        tool = Tool(
+            name="search_prior_art",
+            description=(
+                "Search patent references for a keyword query, to check whether a direction is "
+                "already disclosed. Returns id, title and abstract."
+            ),
+            parameters=SEARCH_TOOL_PARAMETERS,
+            func=search,
+        )
         try:
-            return _parse_response(
-                _generate(matrix, description, element_ids, patent_ids),
-                element_ids,
-                patent_ids,
+            answer = run_agent(
+                prompt,
+                [tool],
+                SuggestionError,
+                max_tool_calls=SEARCH_BUDGET,
+                on_tool_call=on_tool_call,
             )
+            return _parse_response(answer, element_ids, patent_ids, executed)
         except SuggestionError as exc:
             last_error = exc
     raise last_error if last_error else SuggestionError("suggestion generation failed")
