@@ -28,6 +28,7 @@ class DevinAgentBackend:
         timeout_seconds: float = 1500,
         poll_interval: float = 2.0,
         max_concurrent: int = 5,
+        unlisted: bool = False,
         log_callback: Callable[[str, dict], str | None] | None = None,
     ):
         if not api_key:
@@ -41,6 +42,7 @@ class DevinAgentBackend:
         self.run_dir = Path(run_dir) if run_dir else None
         self.timeout_seconds = timeout_seconds
         self.poll_interval = poll_interval
+        self.unlisted = unlisted
         self._semaphore = BoundedSemaphore(max_concurrent)
         self.log_callback = log_callback
         self.last_session_id: str | None = None
@@ -72,7 +74,7 @@ class DevinAgentBackend:
             "structured_output_schema": schema,
             "title": title,
             "tags": tags or ["patentloop"],
-            "unlisted": True,
+            "unlisted": self.unlisted,
             "max_acu_limit": max_acu_limit,
         }
         with self._semaphore:

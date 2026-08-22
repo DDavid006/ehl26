@@ -39,6 +39,20 @@ The model cache is configurable with `PATENTLOOP_MODEL_CACHE`. Recommendation:
 preinstall/cache this model in the environment blueprint for reproducible
 hackathon startup, but the blueprint is intentionally unchanged here.
 
+To run the two sequential live proof cases with no arguments:
+
+```bash
+scripts/run_proof_runs.sh
+```
+
+The script reads the exact ideas from `scripts/ideas/`, invokes `run.py` for
+each case through the configured live backend, and prints each resulting run
+folder. It does not select or assume a verdict. Set `PATENTLOOP_RUNS_DIR` to
+use a different artifact directory.
+
+Devin sessions are visible in the session list by default. Set
+`DEVIN_UNLISTED=true` only when unlisted sessions are preferred.
+
 ## Web UI
 
 ```bash

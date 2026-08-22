@@ -58,6 +58,7 @@ class Judge:
                 timeout_seconds=self.settings.devin_timeout_seconds,
                 poll_interval=self.settings.devin_poll_interval,
                 max_concurrent=self.settings.devin_max_concurrent,
+                unlisted=self.settings.devin_unlisted,
                 log_callback=self._log,
             )
         elif selected == "openai":

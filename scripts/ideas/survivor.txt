@@ -1,0 +1,1 @@
+A lithium-metal battery separator comprising a laser-perforated polyimide membrane whose pore density is graded along the cell's thermal gradient, wherein the pore walls carry a lithiophilic magnesium-fluoride monolayer deposited by atomic layer deposition, such that dendrite nucleation is steered into high-conductance channels and shorting is suppressed during 6C fast charge.

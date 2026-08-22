@@ -167,6 +167,7 @@ def test_devin_backend_polls_and_logs_session_evidence(tmp_path):
     assert output == {"answer": "ok"}
     assert backend.last_session_id == "sess-1"
     assert "sess-1" in backend.last_session_url
+    assert session.posts[0][1]["json"]["unlisted"] is False
 
 
 def test_devin_backend_timeout_is_explicit(tmp_path):

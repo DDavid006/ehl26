@@ -16,6 +16,13 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str | None = field(default_factory=lambda: os.environ.get("OPENAI_API_KEY"))
@@ -39,6 +46,9 @@ class Settings:
     devin_timeout_seconds: float = field(default_factory=lambda: float(os.environ.get("DEVIN_TIMEOUT_SECONDS", "1500")))
     devin_poll_interval: float = field(default_factory=lambda: float(os.environ.get("DEVIN_POLL_INTERVAL", "2")))
     devin_max_concurrent: int = field(default_factory=lambda: int(os.environ.get("DEVIN_MAX_CONCURRENT", "5")))
+    devin_unlisted: bool = field(
+        default_factory=lambda: _env_bool("DEVIN_UNLISTED", False)
+    )
 
 
 def require_live_keys(settings: Settings | None = None) -> None:
