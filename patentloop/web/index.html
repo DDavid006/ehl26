@@ -471,7 +471,18 @@ function handle(ev) {
       setAgent('gate', ev.passed ? 'done' : null);
       const { box, badge } = cards.gate;
       setBadge(badge, ev.passed ? 'pass' : 'fail', ev.passed ? 'pass' : 'fail');
-      metrics(box, [['doable', ev.doable ? 'yes' : 'no'], ['scoped', ev.scoped ? 'yes' : 'no']]);
+      metrics(box, [
+        ['doable', ev.doable ? 'yes' : 'no', 'Can this actually be built without violating physics/engineering, with an inventive step?'],
+        ['scoped', ev.scoped ? 'yes' : 'no', 'Is it a concrete mechanism/method, not a broad aspiration?']
+      ]);
+      if (!ev.doable && ev.doable_reasoning) {
+        hint(box, 'Why DOABLE failed:');
+        box.appendChild(el('div', 'summary-text', ev.doable_reasoning));
+      }
+      if (!ev.scoped && ev.scoped_reasoning) {
+        hint(box, 'Why SCOPED failed:');
+        box.appendChild(el('div', 'summary-text', ev.scoped_reasoning));
+      }
       break;
     }
     case 'decision':
@@ -527,7 +538,7 @@ function showResult(ev) {
   const summaries = {
     DRAFTED: 'The idea survived every gate: it is new compared to published research, no existing patent blocks it, and it passed the feasibility check. A provisional patent application draft has been generated — download it below.',
     KILLED_SATURATED: 'The idea (and its pivoted variants) collides too much with patents that already exist — this area is already heavily patented, so filing would likely be rejected or blocked.',
-    KILLED_INFEASIBLE: 'The idea failed the feasibility check — it is either not technically buildable as described, or too vague/broad to support a concrete patent claim.'
+    KILLED_INFEASIBLE: 'The idea failed the feasibility check.'
   };
   const parts = [summaries[ev.status] || ''];
   if (lastDecision && lastDecision.summary) {

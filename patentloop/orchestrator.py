@@ -101,16 +101,20 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
         gate = run_feasibility_gate(current, extraction)
         entry["feasibility_gate"] = gate
         progress("feasibility_done", {"iteration": iteration, "passed": gate["passed"],
-                                      "doable": gate["doable"]["pass"], "scoped": gate["scoped"]["pass"]})
+                                      "doable": gate["doable"]["pass"], "scoped": gate["scoped"]["pass"],
+                                      "doable_reasoning": gate["doable"]["reasoning"],
+                                      "scoped_reasoning": gate["scoped"]["reasoning"]})
 
         if not gate["passed"]:
             status = "KILLED_INFEASIBLE"
             failed = [name for name in ("doable", "scoped") if not gate[name]["pass"]]
             kill_reason = f"Feasibility gate failed ({', '.join(failed)}) on iteration {iteration}."
-            summary = ("The idea was stopped here because it failed the feasibility check: "
-                       + " and ".join("it is not technically doable as described" if name == "doable"
-                                       else "it is too vague/broad to support a concrete patent claim"
-                                       for name in failed) + ".")
+            labels = {"doable": "it is not technically doable as described",
+                      "scoped": "it is too vague/broad to support a concrete patent claim"}
+            evidence = " ".join(f"[{name.upper()} check] {gate[name]['reasoning']}" for name in failed)
+            summary = ("Stopped: the idea failed the feasibility check because "
+                       + " and ".join(labels[name] for name in failed)
+                       + ". Examiner's reasoning: " + evidence)
             entry["decision"] = {"outcome": "kill_infeasible", "reason": kill_reason, "summary": summary}
             progress("decision", {"iteration": iteration, "outcome": "kill_infeasible",
                                   "summary": summary, "novelty": research["novelty_score"],
