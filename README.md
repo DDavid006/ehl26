@@ -1,4 +1,88 @@
-# Patentability analyser
+# PatentLoop
+
+Fully autonomous multi-agent loop: raw idea in → drafted provisional patent application or a
+reasoned kill report out, with zero human intervention after submission. Every run terminates in
+exactly one of three states: `DRAFTED`, `KILLED_SATURATED`, or `KILLED_INFEASIBLE`.
+
+## Run it
+
+CLI (prints the run folder path at the end):
+
+```bash
+python run.py --idea "your idea text here"
+```
+
+Web UI (single form + live agent log, futuristic dark theme):
+
+```bash
+./.venv/bin/uvicorn patentloop.server:app --host 0.0.0.0 --port 8100
+# open http://localhost:8100
+```
+
+One POST also works: `POST /api/run {"idea": "..."}` streams NDJSON progress events and ends with
+the result + artifact links.
+
+Requires `OPENAI_API_KEY` in `.env`. Optional: `GITHUB_TOKEN` (raises GitHub search rate
+limits), `PATENTLOOP_MODEL` (default `gpt-4o-mini`).
+
+## Architecture
+
+Orchestrator (`patentloop/orchestrator.py`) runs a stateful loop over five distinct agents, each a
+separate callable with its own prompt, external data sources, and structured output schema:
+
+1. **Research Agent** (`patentloop/agents/research.py`) — extracts 3–6 core technical elements
+   (one LLM call), then live-searches **Semantic Scholar**, **arXiv**, and **GitHub** per element.
+   An LLM judge grades the idea against only the retrieved abstracts (never from memory) and must
+   cite what it found → `novelty_score` (0–100) + closest prior publications with links.
+2. **Patent Search Agent** (`patentloop/agents/patents.py`) — queries **Google Patents**
+   (US/EP/WIPO publications) with the same elements, then structurally maps which idea elements
+   overlap which retrieved patent disclosures → `overlap_score` (0–100) + matched patents
+   (id, title, assignee, link, overlapping text). Source chain: Serper.dev search scoped to
+   patents.google.com when `SERPER_API_KEY` is set, else the Google Patents public JSON endpoint,
+   else a DuckDuckGo search scoped to patents.google.com (Google rate-limits direct queries).
+   (The USPTO PatentsView search API was the first choice but `search.patentsview.org` no longer
+   resolves — the service was retired — so Google Patents is the live source.)
+3. **Feasibility Gate** (`patentloop/agents/feasibility.py`) — two hard checks with full logged
+   reasoning: *doable* (no physical/engineering violation, not a commoditised restatement) and
+   *scoped* (concrete mechanism/structure/steps, not a broad aspiration). Failing either kills the
+   run immediately.
+4. **Expert Pivot Agent** (`patentloop/agents/pivot.py`) — role-prompted as a domain expert in the
+   field inferred from the idea; proposes a concrete adjacent-gap variant and must explain, per
+   colliding patent, why the variant avoids it. The variant re-enters the loop; lineage is tracked.
+5. **Drafting Agent** (`patentloop/agents/drafting.py`) — only after all gates clear; writes the
+   provisional-style application (title, field, background referencing the retrieved art, summary,
+   detailed description, independent + dependent claims, "why this is novel", disclaimer).
+
+Decision gate: novelty ≥ 60 and overlap ≤ 40 → draft; otherwise pivot; feasibility failure →
+`KILLED_INFEASIBLE`. Saturation detector (in the orchestrator): iterations are capped at 4, and if
+successive pivot proposals converge (cosine similarity ≥ 0.86 between their OpenAI embeddings)
+while overlap stays ≥ 60, the run stops as `KILLED_SATURATED`.
+
+## Verification — how each score is computed, from what real data
+
+- `novelty_score`: the Research Agent's judge sees only documents actually retrieved from the
+  Semantic Scholar / arXiv / GitHub APIs during the run (title + abstract + URL). The raw API
+  responses for every query are stored in `trace.json` under
+  `iterations[i].research.raw_responses`, so the number is traceable to specific documents.
+- `overlap_score`: computed the same way over patents actually returned by Google Patents; the
+  element-by-element overlap mapping (which idea element collides with which patent text) is in
+  `iterations[i].patent_search.matched_patents`, raw API payloads alongside.
+- Feasibility gate: the full chain of reasoning for both checks is logged verbatim in
+  `iterations[i].feasibility_gate` and reproduced in `report.md` — never summarized away.
+- The final `report.md` contains the complete iteration trace: every idea version, every score,
+  every source consulted, every gate decision, so the run is auditable end to end.
+
+## Artifacts per run (`runs/<run_id>/`)
+
+- `report.md` — final verdict with full reasoning and the complete iteration trace.
+- `prior_art.json` — structured research + patent results (including raw API responses) across
+  all iterations.
+- `draft_application.pdf` (+ `.md`) — the drafted provisional application (only if `DRAFTED`).
+- `trace.json` — full agent-by-agent, iteration-by-iteration log for audit/demo.
+
+---
+
+# Patentability analyser (earlier prototype)
 
 Modules:
 
