@@ -114,9 +114,15 @@ def _run_pipeline(description: str, progress: "queue.Queue[str] | None" = None) 
     note(f"building the coverage matrix over {len(patents)} references")
     matrix = build_matrix(elements, patents)
 
-    note("generating patentability suggestions")
+    note("the suggester is checking directions against the prior art")
+
+    def suggester_search(name: str, arguments: dict) -> None:
+        query = arguments.get("query")
+        if isinstance(query, str) and query.strip():
+            note(f"suggester search: {query.strip()}")
+
     try:
-        suggestions = generate_suggestions(matrix, description)
+        suggestions = generate_suggestions(matrix, description, on_tool_call=suggester_search)
     except Exception as exc:
         raise HTTPException(
             status_code=502, detail=f"suggestion failed: {_upstream_message(exc)}"

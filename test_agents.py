@@ -85,6 +85,13 @@ def test_runs_the_tool_and_feeds_the_result_back(monkeypatch):
     assert json.loads(tool_message["content"]) == [{"patent_id": "US1", "title": "uv-c led cap"}]
 
 
+def test_asks_again_when_the_model_answers_with_nothing(monkeypatch):
+    payloads = install_post(monkeypatch, answer(""), answer("done"))
+
+    assert run_agent("judge this", [tool()], ValueError) == "done"
+    assert len(payloads) == 2
+
+
 def test_withdraws_the_tools_once_the_budget_is_spent(monkeypatch):
     payloads = install_post(
         monkeypatch,
@@ -198,6 +205,17 @@ def test_anthropic_runs_the_tool_and_feeds_the_result_back(monkeypatch, anthropi
     assert block["type"] == "tool_result"
     assert block["tool_use_id"] == "tool-1"
     assert json.loads(block["content"]) == [{"patent_id": "US1", "title": "uv-c led cap"}]
+
+
+def test_anthropic_asks_again_when_the_model_answers_with_nothing(monkeypatch, anthropic_provider):
+    payloads = install_post(
+        monkeypatch,
+        AnthropicResponse({"type": "thinking", "thinking": ""}, says("")),
+        AnthropicResponse(says("done")),
+    )
+
+    assert run_agent("judge this", [tool()], ValueError) == "done"
+    assert len(payloads) == 2
 
 
 def test_anthropic_withdraws_the_tools_once_the_budget_is_spent(monkeypatch, anthropic_provider):

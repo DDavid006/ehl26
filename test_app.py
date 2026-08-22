@@ -78,9 +78,13 @@ def install_pipeline(monkeypatch, verdicts):
 
     monkeypatch.setattr(app_module, "decompose_invention", lambda description: ELEMENTS)
     monkeypatch.setattr(app_module, "find_prior_art", fake_search)
-    monkeypatch.setattr(
-        app_module, "generate_suggestions", lambda matrix, description: SUGGESTIONS
-    )
+
+    def fake_suggest(matrix, description, on_tool_call=None):
+        if on_tool_call is not None:
+            on_tool_call("search_prior_art", {"query": "suggester direction check"})
+        return SUGGESTIONS
+
+    monkeypatch.setattr(app_module, "generate_suggestions", fake_suggest)
     monkeypatch.setattr(app_module, "judge_patentability", fake_examine)
     monkeypatch.setattr(app_module, "generate_revision", fake_revision)
     return calls
@@ -246,6 +250,7 @@ def test_analyse_stream_reports_the_agents_searches(client):
     ]
     assert any("E1 searcher: E1 agent query" in stage for stage in stages)
     assert any("examiner search: examiner follow-up" in stage for stage in stages)
+    assert any("suggester search: suggester direction check" in stage for stage in stages)
 
 
 def test_analyse_stream_reports_failures_as_an_event(monkeypatch):

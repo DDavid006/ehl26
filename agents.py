@@ -122,7 +122,10 @@ def _run_openai(
         message = _message(_post(llm.OPENAI_ENDPOINT, headers, payload, "OpenAI"))
         calls = message.get("tool_calls") or []
         if not calls:
-            return message.get("content") or ""
+            answer = message.get("content") or ""
+            if answer.strip():
+                return answer
+            continue  # an empty answer is worth asking for again
 
         messages.append(message)
         for call in calls:
@@ -174,7 +177,10 @@ def _run_anthropic(
         ).get("content") or []
         requested = [block for block in content if block.get("type") == "tool_use"]
         if not requested:
-            return llm.anthropic_text(content)
+            answer = llm.anthropic_text(content)
+            if answer.strip():
+                return answer
+            continue  # an empty answer is worth asking for again
 
         messages.append({"role": "assistant", "content": content})
         results = []
