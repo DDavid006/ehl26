@@ -149,3 +149,100 @@ def test_http_errors_propagate(monkeypatch):
 
     with pytest.raises(RuntimeError, match="500 from OpenAI"):
         run_agent("judge this", [tool()], ValueError)
+
+
+class AnthropicResponse:
+    def __init__(self, *blocks, status_code=200, text=""):
+        self.status_code = status_code
+        self._blocks = list(blocks)
+        self.text = text
+
+    def json(self):
+        return {"content": self._blocks}
+
+
+def says(text):
+    return {"type": "text", "text": text}
+
+
+def uses(name, arguments, block_id="tool-1"):
+    return {"type": "tool_use", "id": block_id, "name": name, "input": arguments}
+
+
+@pytest.fixture
+def anthropic_provider(monkeypatch):
+    monkeypatch.setattr(llm, "PROVIDER", "anthropic")
+    monkeypatch.setattr(llm, "ANTHROPIC_MODEL_NAMES", ["claude-a"])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+
+
+def test_anthropic_runs_the_tool_and_feeds_the_result_back(monkeypatch, anthropic_provider):
+    payloads = install_post(
+        monkeypatch,
+        AnthropicResponse(says("let me look"), uses("search_prior_art", {"query": "uv-c led cap"})),
+        AnthropicResponse(says('{"patentable": false}')),
+    )
+    seen = []
+
+    result = run_agent(
+        "judge this", [tool()], ValueError, on_tool_call=lambda n, a: seen.append((n, a))
+    )
+
+    assert result == '{"patentable": false}'
+    assert seen == [("search_prior_art", {"query": "uv-c led cap"})]
+    assert [spec["name"] for spec in payloads[0]["tools"]] == ["search_prior_art"]
+    assert "input_schema" in payloads[0]["tools"][0]
+    # the tool result goes back as a user turn holding a tool_result block
+    assert payloads[1]["messages"][1]["role"] == "assistant"
+    block = payloads[1]["messages"][2]["content"][0]
+    assert block["type"] == "tool_result"
+    assert block["tool_use_id"] == "tool-1"
+    assert json.loads(block["content"]) == [{"patent_id": "US1", "title": "uv-c led cap"}]
+
+
+def test_anthropic_withdraws_the_tools_once_the_budget_is_spent(monkeypatch, anthropic_provider):
+    payloads = install_post(
+        monkeypatch,
+        AnthropicResponse(uses("search_prior_art", {"query": "one"})),
+        AnthropicResponse(says("done")),
+    )
+
+    run_agent("judge this", [tool()], ValueError, max_tool_calls=1)
+
+    assert "tools" in payloads[0]
+    assert "tools" not in payloads[1]
+
+
+def test_anthropic_reports_unknown_tools_and_failures(monkeypatch, anthropic_provider):
+    def boom(query):
+        raise RuntimeError("serper down")
+
+    payloads = install_post(
+        monkeypatch,
+        AnthropicResponse(uses("nope", {})),
+        AnthropicResponse(says("done")),
+    )
+    assert run_agent("judge this", [tool()], ValueError) == "done"
+    assert "unknown tool" in payloads[1]["messages"][2]["content"][0]["content"]
+
+    payloads = install_post(
+        monkeypatch,
+        AnthropicResponse(uses("search_prior_art", {"query": "x"})),
+        AnthropicResponse(says("done")),
+    )
+    assert run_agent("judge this", [tool(boom)], ValueError) == "done"
+    assert "serper down" in payloads[1]["messages"][2]["content"][0]["content"]
+
+
+def test_anthropic_missing_api_key_raises_the_caller_error(monkeypatch, anthropic_provider):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY is not set"):
+        run_agent("judge this", [tool()], ValueError)
+
+
+def test_anthropic_http_errors_propagate(monkeypatch, anthropic_provider):
+    install_post(monkeypatch, AnthropicResponse(status_code=500, text="boom"))
+
+    with pytest.raises(RuntimeError, match="500 from Anthropic"):
+        run_agent("judge this", [tool()], ValueError)

@@ -10,8 +10,8 @@ from llm import generate_text
 
 MIN_ELEMENTS = 4
 MAX_ELEMENTS = 8
-MIN_SEARCH_TERMS = 2
-MAX_SEARCH_TERMS = 4
+MIN_SEARCH_TERMS = 4
+MAX_SEARCH_TERMS = 6
 
 PROMPT_TEMPLATE = """You are a patent analyst. Break the invention below into between {min_elements} and {max_elements} distinct functional elements.
 
@@ -20,8 +20,31 @@ Rules:
 not a restatement of a fragment of the input.
   Bad: "a spray"
   Good: "a delivery format applied without rinsing"
-- Give each element between {min_terms} and {max_terms} search terms suitable for a patent \
-keyword search: short noun phrases, no boolean operators.
+- Keep "text" to one short clause naming the function. It is a label, not an explanation: no \
+subordinate clauses, no "in order to", no listing of how it works. The detail belongs in the \
+search terms.
+  Bad: "detects mass changes in the bottle at frequent intervals and filters out transient \
+handling movements to identify discrete drinking events"
+  Good: "measures intake from bottle weight"
+- Extract ONLY what the description explicitly states or directly implies. Do not add \
+specificity that is not present in the source text.
+- Never invent numerical values, tolerances, thresholds, ranges, materials, protocols or other \
+implementation details. If the description gives a number, you may keep it; if it does not, do \
+not supply one.
+  Bad, for "reminds the user to drink": "issues a reminder within 30 milliseconds when the \
+temperature rises above 25 C plus or minus 5 degrees"
+  Good: "issues a drinking reminder in response to the sensed temperature"
+- Where the description is vague, the element stays vague. Vagueness is the correct answer, not \
+a gap to fill.
+- The elements must be mutually consistent: no two elements may contradict each other, restate \
+the same function, or assume different behaviour of the same part.
+- Give each element between {min_terms} and {max_terms} search terms. These are matched against \
+real patent titles and abstracts, so use the broad vocabulary those documents use: one to three \
+words each, no boolean operators, no descriptive phrasing of your own.
+  Bad: "weight change detection for hydration tracking", "noise filtering algorithm"
+  Good: "load cell", "weight sensor", "fluid intake monitoring"
+  Include the plain synonyms a patent might use for the same part, but do not smuggle in \
+specifics the description does not state.
 - Ids are "E1", "E2", ... in order.
 
 Return JSON only. No prose, no explanation, no markdown code fences. The response must be a \

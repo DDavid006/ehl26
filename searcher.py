@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from agents import Tool, run_agent
+import llm
+from agents import TOOL_PROVIDERS, Tool, run_agent
 from patent_client import search_patents
 
 SEARCH_LIMIT = 5
@@ -58,9 +59,13 @@ def find_prior_art(
     """Return up to :data:`MAX_RESULTS` references the searcher agent found for ``element``.
 
     Falls back to a single keyword search on the element's own ``search_terms``
-    when the agent runs no searches (for example under a provider without tool
-    use), so the pipeline always gets references.
+    when the agent runs no searches, and skips the agent entirely under a provider
+    without tool use, so the pipeline always gets references.
     """
+    if llm.PROVIDER not in TOOL_PROVIDERS:
+        # No tool use, so an agent turn would only cost a round-trip it cannot spend.
+        return _fallback(element)
+
     found: list[dict] = []
     seen: set[str] = set()
 

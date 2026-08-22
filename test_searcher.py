@@ -1,5 +1,6 @@
 import pytest
 
+import llm
 import searcher
 from searcher import find_prior_art
 
@@ -18,6 +19,11 @@ def patent(number):
         "assignee": None,
         "date": None,
     }
+
+
+@pytest.fixture(autouse=True)
+def openai_provider(monkeypatch):
+    monkeypatch.setattr(llm, "PROVIDER", "openai")
 
 
 def install_agent(monkeypatch, queries, results_by_query=None):
@@ -91,6 +97,22 @@ def test_falls_back_to_the_applicants_terms_when_the_agent_searches_nothing(monk
     install_agent(monkeypatch, [], {"uv-c led water sterilisation": [patent("US9")]})
 
     assert [p["patent_id"] for p in find_prior_art(ELEMENT)] == ["US9"]
+
+
+def test_runs_the_agent_on_anthropic_too(monkeypatch):
+    calls = install_agent(monkeypatch, ["uv led sterilisation cap"], {"uv led sterilisation cap": [patent("US3")]})
+    monkeypatch.setattr(llm, "PROVIDER", "anthropic")
+
+    assert [p["patent_id"] for p in find_prior_art(ELEMENT)] == ["US3"]
+    assert len(calls) == 1
+
+
+def test_skips_the_agent_without_tool_support(monkeypatch):
+    calls = install_agent(monkeypatch, ["unused"], {"uv-c led water sterilisation": [patent("US9")]})
+    monkeypatch.setattr(llm, "PROVIDER", "gemini")
+
+    assert [p["patent_id"] for p in find_prior_art(ELEMENT)] == ["US9"]
+    assert calls == []  # no round-trip that could not call the tool anyway
 
 
 def test_element_without_terms_or_text_yields_nothing(monkeypatch):

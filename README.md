@@ -9,14 +9,14 @@ Modules:
   fewer than three results come back.
 - `agents.py` — `run_agent(prompt, tools, ...)`: the tool-calling loop. The model chooses which
   tools to call and how often (hard-capped); tool errors are handed back to it rather than
-  raised. Tool use needs `LLM_PROVIDER=openai`; under `gemini` an agent degrades to one plain
-  call with no tools.
+  raised. Tool use needs `LLM_PROVIDER=anthropic` or `openai`; under `gemini` an agent degrades
+  to one plain call with no tools.
 - `searcher.py` — `find_prior_art(element)`: one searcher agent per element, phrasing its own
   queries instead of using the applicant's `search_terms` verbatim; falls back to a plain
   keyword search if it runs none.
 - `llm.py` — `generate_text(prompt, error_cls)`: every non-agentic model call goes through here.
-  `LLM_PROVIDER=gemini` (default) or `openai` picks the backend; both fall through to the next
-  model in the list when one is rate limited, retired or overloaded.
+  `LLM_PROVIDER=anthropic`, `openai` or `gemini` (default) picks the backend; each falls through
+  to the next model in its list when one is rate limited, retired or overloaded.
 - `decompose.py` — `decompose_invention(description)`: model-based split into 4-8 functional
   elements.
 - `coverage.py` — `build_matrix(elements, patents)` and the swappable `is_covered(element,
@@ -51,12 +51,13 @@ Put your keys in `.env` (gitignored):
 SERPER_API_KEY=...
 GEMINI_API_KEY=...
 OPENAI_API_KEY=...
-LLM_PROVIDER=openai
+ANTHROPIC_API_KEY=...
+LLM_PROVIDER=anthropic
 ```
 
-Only the key for the selected `LLM_PROVIDER` is needed. Optional: `GEMINI_MODEL` /
-`OPENAI_MODEL` override the model candidate lists (comma separated, tried in order),
-`GEMINI_TIMEOUT` the per-request timeout.
+Only the key for the selected `LLM_PROVIDER` is needed. Optional: `ANTHROPIC_MODEL` /
+`OPENAI_MODEL` / `GEMINI_MODEL` override the model candidate lists (comma separated, tried in
+order), `GEMINI_TIMEOUT` the per-request timeout.
 
 ## Run locally
 
