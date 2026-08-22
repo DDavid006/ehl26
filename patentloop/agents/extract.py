@@ -39,7 +39,7 @@ def extract_idea(
     llm,
     *,
     agent: str = "extract",
-    iteration: int | None = None,
+    iteration: int,
 ) -> tuple[dict, str | None]:
     output = llm.chat(
         AUTONOMOUS_INSTRUCTION

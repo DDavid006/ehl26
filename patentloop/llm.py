@@ -48,8 +48,7 @@ class Judge:
         if backend is not None and hasattr(backend, "chat"):
             self.backend = backend
             self.backend_name = type(backend).__name__
-            if hasattr(self.backend, "staff_board"):
-                self.backend.staff_board = self.staff_board
+            self.backend.staff_board = self.staff_board
             return
         selected = os.environ.get(
             "PATENTLOOP_BACKEND", self.settings.backend

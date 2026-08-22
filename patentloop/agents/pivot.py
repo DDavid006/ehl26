@@ -51,7 +51,7 @@ def pivot_idea(
     closest: list[dict],
     previous: list[str],
     *,
-    iteration: int | None = None,
+    iteration: int,
 ):
     output = llm.chat(
         AUTONOMOUS_INSTRUCTION

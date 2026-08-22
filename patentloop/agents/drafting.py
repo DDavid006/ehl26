@@ -53,7 +53,7 @@ class DraftingAgent:
         patents: dict,
         *,
         run_dir,
-        iteration: int | None = None,
+        iteration: int,
     ) -> dict:
         output = self.llm.chat(
             AUTONOMOUS_INSTRUCTION

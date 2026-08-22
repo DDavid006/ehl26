@@ -43,7 +43,7 @@ class FeasibilityAgent:
         self.llm = llm
 
     def run(
-        self, idea_text: str, extracted: dict, *, iteration: int | None = None
+        self, idea_text: str, extracted: dict, *, iteration: int
     ) -> tuple[dict, list[str]]:
         rules = rule_checks(extracted)
         jobs = (

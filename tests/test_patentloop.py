@@ -454,20 +454,44 @@ def _patch_orchestrator(monkeypatch, *, feasible=True, drafted=False):
         "field": "engineering",
         "persona_hint": "engineer",
     }
-    monkeypatch.setattr(orchestrator_module, "extract_idea", lambda idea, llm: (extracted, None))
+    monkeypatch.setattr(
+        orchestrator_module,
+        "extract_idea",
+        lambda idea, llm, *, iteration: (extracted, None),
+    )
     class Feasibility:
         def __init__(self, llm):
             pass
-        def run(self, idea, data):
+        def run(self, idea, data, *, iteration):
             return ({"feasible": feasible, "scoped": feasible, "judges": [{"reasoning": "r"}]}, [])
     monkeypatch.setattr(orchestrator_module, "FeasibilityAgent", Feasibility)
     monkeypatch.setattr(orchestrator_module, "ResearchAgent", lambda llm, sources: type(
         "Research", (), {"run": lambda self, *args, **kwargs: {"novelty_score": 90 if drafted else 20, "element_scores": {"e1": 0.9, "e2": 0.9, "e3": 0.9}, "verified_elements": 3, "unverified_elements": [], "closest_publications": [], "rationale": "", "llm_paths": []}})())
     monkeypatch.setattr(orchestrator_module, "PatentSearchAgent", lambda llm, sources, **kwargs: type(
         "Patents", (), {"run": lambda self, *args, **kwargs: {"overlap_score": 10 if drafted else 80, "patents_examined": 1 if drafted else 1, "patents": [{"id": "p1", "overlap": 0.1, "element_verdicts": [{"claim_quote": "claim"}]}] if drafted else [{"id": "p1", "overlap": 0.8, "element_verdicts": []}], "llm_paths": []}})())
-    monkeypatch.setattr(orchestrator_module, "DraftingAgent", lambda llm: type(
-        "Draft", (), {"run": lambda self, *args, **kwargs: {"markdown_path": "draft.md", "pdf_path": "draft.pdf", "llm_paths": []}})())
-    monkeypatch.setattr(orchestrator_module, "pivot_idea", lambda *args: ({"new_idea_text": "a different mechanism"}, None))
+    monkeypatch.setattr(
+        orchestrator_module,
+        "DraftingAgent",
+        lambda llm: type(
+            "Draft",
+            (),
+            {
+                "run": lambda self, *args, iteration, **kwargs: {
+                    "markdown_path": "draft.md",
+                    "pdf_path": "draft.pdf",
+                    "llm_paths": [],
+                }
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "pivot_idea",
+        lambda *args, iteration: (
+            {"new_idea_text": "a different mechanism"},
+            None,
+        ),
+    )
 
 
 def test_orchestrator_reaches_infeasible(monkeypatch, tmp_path):

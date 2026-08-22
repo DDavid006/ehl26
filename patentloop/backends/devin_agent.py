@@ -136,8 +136,9 @@ class DevinAgentBackend:
         schema = self._schema(json_schema)
         role_data = role_for(agent)
         role_title = role or role_data["title"]
+        title = f"PatentLoop · {role_title}"
         if iteration is not None:
-            title = f"PatentLoop · {role_title} · iteration {iteration}"
+            title += f" · iteration {iteration}"
         role_slug = role_title.lower().replace(" ", "-")
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -147,7 +148,7 @@ class DevinAgentBackend:
             "prompt": prompt,
             "structured_output_schema": schema,
             "title": title,
-            "tags": ["patentloop", role_slug] if role else (tags or ["patentloop"]),
+            "tags": ["patentloop", role_slug],
             "unlisted": self.unlisted,
             "max_acu_limit": max_acu_limit,
         }
