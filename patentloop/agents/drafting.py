@@ -45,7 +45,16 @@ class DraftingAgent:
     def __init__(self, llm):
         self.llm = llm
 
-    def run(self, idea_text: str, extracted: dict, research: dict, patents: dict, *, run_dir) -> dict:
+    def run(
+        self,
+        idea_text: str,
+        extracted: dict,
+        research: dict,
+        patents: dict,
+        *,
+        run_dir,
+        iteration: int | None = None,
+    ) -> dict:
         output = self.llm.chat(
             AUTONOMOUS_INSTRUCTION
             + "Write a complete provisional patent application draft. Include one independent and at least three dependent claims, and cite only supplied prior art.\n"
@@ -61,6 +70,9 @@ class DraftingAgent:
             ),
             DRAFT_SCHEMA,
             agent="drafting",
+            iteration=iteration,
+            role="IP Attorney",
+            task="Prepare a provisional patent application draft.",
         )
         claims = output.get("claims", "")
         markdown = "\n\n".join([

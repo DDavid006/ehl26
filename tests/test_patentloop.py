@@ -13,6 +13,7 @@ from patentloop.errors import EvidenceFailure
 from patentloop.llm import Judge
 from patentloop.orchestrator import saturated
 from patentloop.backends.devin_agent import DevinAgentBackend, DevinBackendError
+from patentloop.company import StaffBoard
 from patentloop.web.app import create_app
 
 
@@ -155,6 +156,30 @@ def test_artifacts_write_expected_keys(tmp_path):
     assert json.loads((tmp_path / "trace.json").read_text())[0]["agent"] == "extract"
 
 
+def test_company_board_is_atomic_and_embedded_in_trace_and_report(tmp_path):
+    board = StaffBoard(tmp_path)
+    assignment_id = board.dispatch(
+        "extract", task="Extract the invention.", iteration=1
+    )
+    board.running(assignment_id)
+    board.completed(assignment_id)
+    writer = ArtifactWriter(tmp_path, board=board)
+    writer.event(1, "extract", {"idea": "x"}, {"elements": []})
+    writer.write_report(
+        "KILLED_INFEASIBLE",
+        [{"iteration": 1, "novelty_score": 0, "overlap_score": 0}],
+        [],
+        [],
+        termination_reason="feasibility_failure",
+    )
+    payload = json.loads((tmp_path / "company.json").read_text())
+    assert payload["assignments"][0]["assignment_id"] == assignment_id
+    assert not (tmp_path / "company.json.tmp").exists()
+    trace = json.loads((tmp_path / "trace.json").read_text())
+    assert trace[0]["company"]["assignments"][0]["status"] == "completed"
+    assert "## Team" in (tmp_path / "report.md").read_text()
+
+
 def test_devin_backend_polls_and_logs_session_evidence(tmp_path):
     session = FakeDevinSession({"status": "completed", "structured_output": {"answer": "ok"}})
     backend = DevinAgentBackend(
@@ -213,6 +238,75 @@ def test_devin_backend_nudges_blocked_session(tmp_path):
     assert output == {"answer": "ok"}
     assert any(url.endswith("/message") for url, _ in session.posts)
     assert backend.last_log_path
+
+
+def test_company_board_tracks_blocked_nudge_and_role_tags(tmp_path):
+    class RecordingBoard(StaffBoard):
+        def __init__(self, path):
+            super().__init__(path)
+            self.transitions = []
+
+        def blocked(self, assignment_id, **kwargs):
+            self.transitions.append("blocked")
+            super().blocked(assignment_id, **kwargs)
+
+        def completed(self, assignment_id, **kwargs):
+            self.transitions.append("completed")
+            super().completed(assignment_id, **kwargs)
+
+    session = BlockedThenCompleteDevinSession()
+    board = RecordingBoard(tmp_path)
+    backend = DevinAgentBackend(
+        "devin-test", session=session, staff_board=board, poll_interval=0
+    )
+    output = backend.chat(
+        "answer",
+        {
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "string"}},
+        },
+        agent="patent_search",
+        role="Patent Examiner",
+        iteration=2,
+        task="Find and validate patents.",
+    )
+    assert output == {"answer": "ok"}
+    assert board.transitions == ["blocked", "completed"]
+    assignment = json.loads((tmp_path / "company.json").read_text())["assignments"][0]
+    assert assignment["role_title"] == "Patent Examiner"
+    assert assignment["status"] == "completed"
+    assert assignment["session_url"].endswith("sess-1")
+    body = session.posts[0][1]["json"]
+    assert body["title"] == "PatentLoop · Patent Examiner · iteration 2"
+    assert body["tags"] == ["patentloop", "patent-examiner"]
+
+
+def test_company_board_records_failed_agent(tmp_path):
+    session = FakeDevinSession({"status": "completed", "structured_output": {}})
+    board = StaffBoard(tmp_path)
+    backend = DevinAgentBackend(
+        "devin-test", session=session, staff_board=board, poll_interval=0
+    )
+    try:
+        backend.chat(
+            "answer",
+            {
+                "type": "object",
+                "required": ["answer"],
+                "properties": {"answer": {"type": "string"}},
+            },
+            agent="extract",
+            iteration=1,
+            task="Extract elements.",
+        )
+    except DevinBackendError:
+        pass
+    else:
+        raise AssertionError("expected schema validation failure")
+    assignment = json.loads((tmp_path / "company.json").read_text())["assignments"][0]
+    assert assignment["status"] == "failed"
+    assert "schema validation" in assignment["error"]
 
 
 class StubLLM:
@@ -422,3 +516,21 @@ def test_web_post_and_events_endpoints(tmp_path):
         time.sleep(0.01)
     assert client.get(f"/api/runs/{run_id}/events").status_code == 200
     assert summary["verdict"] == "KILLED_INFEASIBLE"
+
+
+def test_web_staff_endpoint_returns_empty_or_assignments(tmp_path):
+    app = create_app(tmp_path, runner=lambda *args, **kwargs: {})
+    client = app.test_client()
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    empty = client.get("/api/runs/run-1/staff")
+    assert empty.status_code == 200
+    assert empty.get_json() == {"assignments": []}
+    (run_dir / "company.json").write_text(
+        json.dumps({"assignments": [{"assignment_id": "a-1", "status": "running"}]})
+    )
+    populated = client.get("/api/runs/run-1/staff")
+    assert populated.status_code == 200
+    assert populated.get_json() == {
+        "assignments": [{"assignment_id": "a-1", "status": "running"}]
+    }

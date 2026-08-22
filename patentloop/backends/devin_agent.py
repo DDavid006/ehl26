@@ -11,6 +11,8 @@ from typing import Any, Callable
 import requests
 from jsonschema import validate
 
+from ..company import StaffBoard, role_for
+
 
 class DevinBackendError(RuntimeError):
     """Raised when a Devin session fails or returns invalid output."""
@@ -30,6 +32,7 @@ class DevinAgentBackend:
         max_concurrent: int = 5,
         unlisted: bool = False,
         log_callback: Callable[[str, dict], str | None] | None = None,
+        staff_board: StaffBoard | None = None,
     ):
         if not api_key:
             raise DevinBackendError(
@@ -45,6 +48,7 @@ class DevinAgentBackend:
         self.unlisted = unlisted
         self._semaphore = BoundedSemaphore(max_concurrent)
         self.log_callback = log_callback
+        self.staff_board = staff_board
         self.last_session_id: str | None = None
         self.last_session_url: str | None = None
         self.last_log_path: str | None = None
@@ -63,8 +67,78 @@ class DevinAgentBackend:
         title: str = "PatentLoop agent",
         tags: list[str] | None = None,
         max_acu_limit: int = 25,
+        agent: str = "agent",
+        role: str | None = None,
+        iteration: int | None = None,
+        task: str = "Complete the assigned structured-output task.",
+    ) -> dict[str, Any]:
+        assignment_id = None
+        if self.staff_board is not None:
+            assignment_id = self.staff_board.dispatch(
+                agent,
+                task=task,
+                iteration=iteration,
+                role=role,
+            )
+        try:
+            return self._chat(
+                prompt,
+                json_schema,
+                title=title,
+                tags=tags,
+                max_acu_limit=max_acu_limit,
+                assignment_id=assignment_id,
+                agent=agent,
+                role=role,
+                iteration=iteration,
+            )
+        except Exception as exc:
+            if assignment_id is not None:
+                self.staff_board.failed(assignment_id, str(exc))
+            raise
+
+    @staticmethod
+    def _status(state: dict) -> str:
+        return str(state.get("status") or state.get("status_enum") or state.get("state") or "").lower()
+
+    @staticmethod
+    def _acu(state: dict):
+        for key in (
+            "acu_usage",
+            "acu_used",
+            "acu_consumed",
+            "total_acu",
+            "acu",
+        ):
+            if key in state:
+                return state[key], state[key]
+        for container_key in ("usage", "metrics"):
+            container = state.get(container_key)
+            if isinstance(container, dict):
+                for key in ("acu_usage", "acu_used", "acu_consumed", "total_acu", "acu"):
+                    if key in container:
+                        return container[key], container[key]
+        return None, None
+
+    def _chat(
+        self,
+        prompt: str,
+        json_schema: dict,
+        *,
+        title: str,
+        tags: list[str] | None,
+        max_acu_limit: int,
+        assignment_id: str | None,
+        agent: str,
+        role: str | None,
+        iteration: int | None,
     ) -> dict[str, Any]:
         schema = self._schema(json_schema)
+        role_data = role_for(agent)
+        role_title = role or role_data["title"]
+        if iteration is not None:
+            title = f"PatentLoop · {role_title} · iteration {iteration}"
+        role_slug = role_title.lower().replace(" ", "-")
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -73,11 +147,13 @@ class DevinAgentBackend:
             "prompt": prompt,
             "structured_output_schema": schema,
             "title": title,
-            "tags": tags or ["patentloop"],
+            "tags": ["patentloop", role_slug] if role else (tags or ["patentloop"]),
             "unlisted": self.unlisted,
             "max_acu_limit": max_acu_limit,
         }
         with self._semaphore:
+            if assignment_id is not None:
+                self.staff_board.running(assignment_id)
             try:
                 response = self.session.post(
                     f"{self.base_url}/sessions",
@@ -98,6 +174,10 @@ class DevinAgentBackend:
                 or created.get("session_url")
                 or f"https://app.devin.ai/sessions/{session_id}"
             )
+            if assignment_id is not None:
+                self.staff_board.session(
+                    assignment_id, session_id, self.last_session_url
+                )
             started = time.monotonic()
             polls = []
             nudges = []
@@ -139,8 +219,15 @@ class DevinAgentBackend:
                 except (requests.RequestException, ValueError) as exc:
                     raise DevinBackendError(f"could not poll Devin session {session_id}: {exc}") from exc
                 polls.append(state)
-                status = str(state.get("status") or state.get("state") or "").lower()
+                acu_value, acu_raw = self._acu(state)
+                if assignment_id is not None and acu_raw is not None:
+                    self.staff_board.usage(
+                        assignment_id, acu_value, raw=acu_raw
+                    )
+                status = self._status(state)
                 if status in blocked:
+                    if assignment_id is not None:
+                        self.staff_board.blocked(assignment_id, raw_status=status)
                     if nudged:
                         error = DevinBackendError(
                             f"Devin session {session_id} remained {status} after an autonomous nudge"
@@ -195,6 +282,8 @@ class DevinAgentBackend:
                     time.sleep(interval)
                     interval = min(max(interval * 1.5, 0.1), 15.0)
                     continue
+                if status not in terminal and assignment_id is not None:
+                    self.staff_board.running(assignment_id)
                 if status in terminal:
                     if status != "completed":
                         error = DevinBackendError(
@@ -285,6 +374,10 @@ class DevinAgentBackend:
                         "nudges": nudges,
                         "structured_output": output,
                     })
+                    if assignment_id is not None:
+                        self.staff_board.completed(
+                            assignment_id, acu_usage=acu_value, acu_raw=acu_raw
+                        )
                     return output
                 time.sleep(interval)
                 interval = min(max(interval * 1.5, 0.1), 15.0)

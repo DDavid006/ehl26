@@ -80,6 +80,17 @@ def create_app(runs_dir: Path | str | None = None, runner=run_pipeline) -> Flask
         trace = json.loads((path / "trace.json").read_text()) if (path / "trace.json").exists() else []
         return jsonify({"run_id": run_id, "log": log, "events": trace})
 
+    @app.get("/api/runs/<run_id>/staff")
+    def run_staff(run_id: str):
+        path = run_dir_or_404(run_id) / "company.json"
+        if not path.is_file():
+            return jsonify({"assignments": []})
+        try:
+            board = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            board = {"assignments": []}
+        return jsonify(board)
+
     @app.get("/api/runs/<run_id>/report")
     def run_report(run_id: str):
         report = run_dir_or_404(run_id) / "report.md"

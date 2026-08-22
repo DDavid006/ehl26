@@ -12,6 +12,7 @@ from typing import Any
 
 from .backends.devin_agent import DevinAgentBackend
 from .backends.openai_chat import OpenAIChatBackend
+from .company import StaffBoard
 from .config import Settings
 from .embed import embed as local_embed
 
@@ -41,11 +42,14 @@ class Judge:
     ):
         self.settings = settings or Settings()
         self.run_dir = Path(run_dir) if run_dir else None
+        self.staff_board = StaffBoard(self.run_dir)
         self._sequence = 0
         self._lock = threading.Lock()
         if backend is not None and hasattr(backend, "chat"):
             self.backend = backend
             self.backend_name = type(backend).__name__
+            if hasattr(self.backend, "staff_board"):
+                self.backend.staff_board = self.staff_board
             return
         selected = os.environ.get(
             "PATENTLOOP_BACKEND", self.settings.backend
@@ -60,6 +64,7 @@ class Judge:
                 max_concurrent=self.settings.devin_max_concurrent,
                 unlisted=self.settings.devin_unlisted,
                 log_callback=self._log,
+                staff_board=self.staff_board,
             )
         elif selected == "openai":
             self.backend = OpenAIChatBackend(
@@ -68,6 +73,7 @@ class Judge:
                 self.settings.model,
                 session=session,
                 log_callback=self._log,
+                staff_board=self.staff_board,
             )
         else:
             raise LLMError(f"unknown PATENTLOOP_BACKEND={selected!r}; use devin or openai")
@@ -103,9 +109,19 @@ class Judge:
         *,
         agent: str = "agent",
         title: str | None = None,
+        role: str | None = None,
+        iteration: int | None = None,
+        task: str = "Complete the assigned structured-output task.",
     ) -> dict[str, Any]:
         return self.backend.chat(
-            prompt, json_schema, title=title or agent, tags=["patentloop", agent]
+            prompt,
+            json_schema,
+            title=title or agent,
+            tags=["patentloop", agent],
+            agent=agent,
+            role=role,
+            iteration=iteration,
+            task=task,
         )
 
     def embed(self, texts: list[str], *, agent: str = "embed"):

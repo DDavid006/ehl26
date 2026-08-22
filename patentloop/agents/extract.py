@@ -34,13 +34,21 @@ EXTRACT_SCHEMA = {
 }
 
 
-def extract_idea(idea_text: str, llm, *, agent: str = "extract") -> tuple[dict, str | None]:
+def extract_idea(
+    idea_text: str,
+    llm,
+    *,
+    agent: str = "extract",
+    iteration: int | None = None,
+) -> tuple[dict, str | None]:
     output = llm.chat(
         AUTONOMOUS_INSTRUCTION
         + "Decompose an invention into 3 to 6 concrete claim elements.\n\n"
         + json.dumps({"idea": idea_text}, indent=2, sort_keys=True),
         EXTRACT_SCHEMA,
         agent=agent,
+        iteration=iteration,
+        task="Decompose the invention into concrete claim elements.",
     )
     elements = output.get("elements", [])
     if not 3 <= len(elements) <= 6:

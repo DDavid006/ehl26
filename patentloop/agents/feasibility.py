@@ -42,7 +42,9 @@ class FeasibilityAgent:
     def __init__(self, llm):
         self.llm = llm
 
-    def run(self, idea_text: str, extracted: dict) -> tuple[dict, list[str]]:
+    def run(
+        self, idea_text: str, extracted: dict, *, iteration: int | None = None
+    ) -> tuple[dict, list[str]]:
         rules = rule_checks(extracted)
         jobs = (
             (
@@ -78,6 +80,13 @@ class FeasibilityAgent:
                     },
                 },
                 agent=name,
+                iteration=iteration,
+                role=(
+                    "Feasibility Engineer"
+                    if name == "feasibility_physical"
+                    else "Claims Scope Counsel"
+                ),
+                task=prompt,
             )
             return output, getattr(self.llm, "last_log_path", None)
         with ThreadPoolExecutor(max_workers=2) as pool:

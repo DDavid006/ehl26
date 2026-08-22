@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import inspect
 from pathlib import Path
 
 from .agents.drafting import DraftingAgent
@@ -22,6 +23,7 @@ from .config import (
     Settings,
     require_live_keys,
 )
+from .company import StaffBoard
 from .errors import EvidenceFailure
 from .llm import Judge
 from .sources.arxiv import ArxivSource
@@ -50,6 +52,16 @@ def saturated(
     )
 
 
+def _call_with_iteration(callable_, *args, iteration: int):
+    try:
+        supports = "iteration" in inspect.signature(callable_).parameters
+    except (TypeError, ValueError):
+        supports = False
+    if supports:
+        return callable_(*args, iteration=iteration)
+    return callable_(*args)
+
+
 class PatentLoop:
     def __init__(
         self,
@@ -63,8 +75,18 @@ class PatentLoop:
         logger=None,
     ):
         self.run_dir = Path(run_dir)
-        self.writer = ArtifactWriter(self.run_dir)
         self.llm = llm or Judge(run_dir=self.run_dir)
+        self.staff_board = getattr(self.llm, "staff_board", None) or StaffBoard(
+            self.run_dir
+        )
+        if getattr(self.llm, "staff_board", None) is None:
+            try:
+                self.llm.staff_board = self.staff_board
+                if hasattr(self.llm, "backend"):
+                    self.llm.backend.staff_board = self.staff_board
+            except Exception:
+                pass
+        self.writer = ArtifactWriter(self.run_dir, board=self.staff_board)
         if literature_sources is None and patent_sources is None and allow_devin_search is None:
             settings = getattr(self.llm, "settings", Settings())
             session = getattr(self.llm, "session", None)
@@ -111,13 +133,20 @@ class PatentLoop:
         failure = None
         for iteration in range(1, max_iterations + 1):
             self._log(f"iteration {iteration}: extracting claim elements")
-            extracted, extract_log = extract_idea(current, self.llm)
+            extracted, extract_log = _call_with_iteration(
+                extract_idea, current, self.llm, iteration=iteration
+            )
             self.writer.event(
                 iteration, "extract", current, extracted,
                 llm_calls=[extract_log] if extract_log else [],
                 session_urls=self._session_urls(),
             )
-            feasibility, feasibility_logs = FeasibilityAgent(self.llm).run(current, extracted)
+            feasibility, feasibility_logs = _call_with_iteration(
+                FeasibilityAgent(self.llm).run,
+                current,
+                extracted,
+                iteration=iteration,
+            )
             self.writer.event(
                 iteration, "feasibility", extracted, feasibility,
                 llm_calls=feasibility_logs, session_urls=self._session_urls(),
@@ -228,7 +257,20 @@ class PatentLoop:
                 row["gate_decision"] = "drafted"
                 row["termination_reason"] = "gates_passed"
                 termination_reason = "gates_passed"
-                draft = DraftingAgent(self.llm).run(current, extracted, research, patents, run_dir=self.run_dir)
+                draft_call = DraftingAgent(self.llm).run
+                if "iteration" in inspect.signature(draft_call).parameters:
+                    draft = draft_call(
+                        current,
+                        extracted,
+                        research,
+                        patents,
+                        run_dir=self.run_dir,
+                        iteration=iteration,
+                    )
+                else:
+                    draft = draft_call(
+                        current, extracted, research, patents, run_dir=self.run_dir
+                    )
                 self.writer.event(
                     iteration, "drafting", {"idea": current}, draft,
                     artifacts=[draft["markdown_path"], draft["pdf_path"]],
@@ -264,10 +306,27 @@ class PatentLoop:
                 break
             row["gate_decision"] = "pivot"
             row["termination_reason"] = "pivot"
-            pivot, pivot_log = pivot_idea(
-                self.llm, current, extracted.get("field", ""), extracted.get("persona_hint", ""),
-                patents.get("patents", [])[:3], research.get("closest_publications", []), previous_pivots,
-            )
+            if "iteration" in inspect.signature(pivot_idea).parameters:
+                pivot, pivot_log = pivot_idea(
+                    self.llm,
+                    current,
+                    extracted.get("field", ""),
+                    extracted.get("persona_hint", ""),
+                    patents.get("patents", [])[:3],
+                    research.get("closest_publications", []),
+                    previous_pivots,
+                    iteration=iteration,
+                )
+            else:
+                pivot, pivot_log = pivot_idea(
+                    self.llm,
+                    current,
+                    extracted.get("field", ""),
+                    extracted.get("persona_hint", ""),
+                    patents.get("patents", [])[:3],
+                    research.get("closest_publications", []),
+                    previous_pivots,
+                )
             current = pivot["new_idea_text"]
             previous_pivots.append(current)
             pivot_lineage.append({"version": iteration + 1, "idea": current})

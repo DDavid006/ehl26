@@ -13,9 +13,10 @@ def _json(path: Path, value) -> None:
 
 
 class ArtifactWriter:
-    def __init__(self, run_dir: Path | str):
+    def __init__(self, run_dir: Path | str, board=None):
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.board = board
         self.trace: list[dict] = []
         self.seq = 0
 
@@ -31,6 +32,8 @@ class ArtifactWriter:
             "output": output, "artifacts": list(artifacts), "llm_calls": list(llm_calls),
             "session_urls": list(session_urls),
         }
+        if self.board is not None:
+            event["company"] = self.board.snapshot()
         self.trace.append(event)
         _json(self.run_dir / "trace.json", self.trace)
         return event
@@ -100,6 +103,25 @@ class ArtifactWriter:
             )
         lines += ["", "## Reasoning"]
         lines.extend(f"- {text}" for text in reasoning)
+        assignments = []
+        if self.board is not None:
+            assignments = self.board.snapshot().get("assignments", [])
+        if assignments:
+            lines += [
+                "",
+                "## Team",
+                "",
+                "| Role | Task | Status | Duration (s) | Session URL |",
+                "|---|---|---|---:|---|",
+            ]
+            for assignment in assignments:
+                lines.append(
+                    f"| {assignment.get('role_title', '—')} | "
+                    f"{assignment.get('task', '—')} | "
+                    f"{assignment.get('status', '—')} | "
+                    f"{assignment.get('duration_seconds', '—') or '—'} | "
+                    f"{assignment.get('session_url', '—') or '—'} |"
+                )
         lines += ["", "## Citations"]
         lines.extend(f"- {item.get('title', item.get('id', 'unknown'))} ({item.get('url', 'no URL')}) — raw: `{item.get('raw_path', 'n/a')}`" for item in citations)
         session_urls = [

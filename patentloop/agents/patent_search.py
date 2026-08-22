@@ -80,7 +80,15 @@ class PatentSearchAgent:
                 sort_keys=True,
             )
         )
-        output = self.llm.chat(prompt, schema, agent="devin_patent_search", title="PatentLoop patent search")
+        output = self.llm.chat(
+            prompt,
+            schema,
+            agent="devin_patent_search",
+            title="PatentLoop patent search",
+            iteration=iteration,
+            role="Patent Examiner",
+            task="Search opened patent records and return verified claim evidence.",
+        )
         evidence_path = getattr(self.llm, "last_log_path", None)
         return [
             {
@@ -221,6 +229,9 @@ class PatentSearchAgent:
                     },
                 },
                 agent=f"claim_map_{patent.get('id', 'unknown')}",
+                iteration=iteration,
+                role="Patent Examiner",
+                task="Map each idea element to verbatim claim language.",
             )
             verdicts = [
                 validate_claim_quote(item, patent.get("claims") or patent.get("claim1", ""))

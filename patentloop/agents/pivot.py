@@ -42,7 +42,17 @@ PIVOT_SCHEMA = {
 }
 
 
-def pivot_idea(llm, current_idea: str, field: str, persona_hint: str, collisions: list[dict], closest: list[dict], previous: list[str]):
+def pivot_idea(
+    llm,
+    current_idea: str,
+    field: str,
+    persona_hint: str,
+    collisions: list[dict],
+    closest: list[dict],
+    previous: list[str],
+    *,
+    iteration: int | None = None,
+):
     output = llm.chat(
         AUTONOMOUS_INSTRUCTION
         + f"Act as an expert in {field} ({persona_hint}). Produce a technically plausible non-repeating redesign.\n"
@@ -58,5 +68,8 @@ def pivot_idea(llm, current_idea: str, field: str, persona_hint: str, collisions
         ),
         PIVOT_SCHEMA,
         agent="pivot",
+        iteration=iteration,
+        role="Pivot Strategist",
+        task="Design a technically plausible non-repeating redesign.",
     )
     return output, getattr(llm, "last_log_path", None)

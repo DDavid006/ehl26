@@ -156,6 +156,9 @@ class ResearchAgent:
                 },
             },
             agent="research_rationale",
+            iteration=iteration,
+            role="Research Analyst",
+            task="Explain novelty using only retrieved literature evidence.",
         )
         path = getattr(self.llm, "last_log_path", None)
         if path:
