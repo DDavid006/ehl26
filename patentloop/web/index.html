@@ -364,34 +364,8 @@ const STATUS_LABELS = {
   KILLED_INFEASIBLE: 'Stopped — idea not feasible'
 };
 
-function memoryCard(ev) {
-  const block = el('div', 'iteration');
-  const head = el('div', 'iteration-head');
-  head.appendChild(el('span', '', 'Cross-run memory'));
-  block.appendChild(head);
-  const box = el('div', 'card pivot');
-  const cardHead = el('div', 'card-head');
-  cardHead.appendChild(el('span', 'card-title', 'Recalled prior art from earlier runs'));
-  const badge = el('span', 'badge done', `${ev.hits.length} recalled`);
-  cardHead.appendChild(badge);
-  box.appendChild(cardHead);
-  const list = el('ul');
-  ev.hits.forEach(h => {
-    const li = el('li', '', `\u21b3 ${h.patent_id}  ${h.title} `);
-    li.appendChild(el('span', 'chip', `sim ${h.similarity}`));
-    li.appendChild(el('span', 'chip', `from run ${h.source_run_id}`));
-    list.appendChild(li);
-  });
-  box.appendChild(list);
-  block.appendChild(box);
-  $('timeline').appendChild(block);
-}
-
 function handle(ev) {
   switch (ev.event) {
-    case 'memory':
-      memoryCard(ev);
-      break;
     case 'extract':
       currentIteration = iterationBlock(ev.iteration, ev.idea);
       cards = {};
@@ -492,7 +466,7 @@ function handle(ev) {
     case 'pivot':
       setAgent('pivot', 'active');
       cards.pivot = card('pivot', `Step 5 · Expert pivot (${ev.field} specialist)`);
-      hint(cards.pivot.box, 'A domain expert reshapes the idea toward a nearby gap that prior art doesn\u2019t cover; the next iteration re-tests the new version.');
+      hint(cards.pivot.box, 'A domain expert reshapes the idea toward a nearby gap that prior art doesn\u2019t cover. It is given the full reasoning history of every previous round \u2014 what was tried, why it was rejected, and which directions were already taken \u2014 so it never repeats itself. The next iteration re-tests the new version.');
       break;
     case 'pivot_done': {
       setAgent('pivot', 'done');

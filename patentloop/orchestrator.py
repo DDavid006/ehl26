@@ -12,7 +12,6 @@ from .agents import extract_elements, run_drafting, run_feasibility_gate, run_pa
 from .artifacts import write_artifacts
 from .coverage import build_matrix, elements_from_extraction
 from .llm import cosine, embed
-from .memory import recall, update_memory
 
 MAX_ITERATIONS = 4
 NOVELTY_HIGH = 60
@@ -40,16 +39,10 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
     kill_reason = ""
     draft: dict[str, Any] | None = None
 
-    try:
-        memory_hits = recall(idea, runs_dir)
-    except Exception:  # memory must never break a run (e.g. no embeddings available)
-        memory_hits = []
-    trace["memory_hits"] = memory_hits
-    if memory_hits:
-        progress("memory", {"hits": [
-            {k: h.get(k) for k in ("patent_id", "title", "similarity", "source_run_id")}
-            for h in memory_hits
-        ]})
+    # In-run reasoning memory: what each previous round tried, why it was
+    # rejected, and which pivot direction it took. Fed to the pivot agent so
+    # later rounds never repeat an earlier direction.
+    round_memory: list[dict[str, Any]] = []
 
     current = idea
     for iteration in range(1, MAX_ITERATIONS + 1):
@@ -74,10 +67,7 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
         progress("patent_search", {"iteration": iteration})
         patent_search = run_patent_search(current, extraction)
         entry["patent_search"] = patent_search
-        live_ids = {r.get("patent_id") for r in patent_search["records"]}
-        remembered = [h for h in memory_hits if h.get("patent_id") not in live_ids]
-        matrix = build_matrix(elements_from_extraction(extraction),
-                              remembered + patent_search["records"])
+        matrix = build_matrix(elements_from_extraction(extraction), patent_search["records"])
         entry["coverage_matrix"] = matrix
         progress("coverage", {
             "iteration": iteration,
@@ -163,9 +153,19 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
                              f"overlap {overlap} > {OVERLAP_LOW} or novelty {novelty} < {NOVELTY_HIGH}"}
         progress("decision", {"iteration": iteration, "outcome": "pivot",
                               "summary": summary, "novelty": novelty, "overlap": overlap})
+        round_memory.append({
+            "round": iteration,
+            "idea_tried": current,
+            "novelty_score": novelty,
+            "overlap_score": overlap,
+            "why_rejected": summary,
+            "blocking_patents": [p.get("title") for p in patent_search["matched_patents"][:4]],
+        })
         progress("pivot", {"iteration": iteration, "field": extraction["field"]})
-        pivot = run_pivot(current, extraction["field"], research, patent_search)
+        pivot = run_pivot(current, extraction["field"], research, patent_search, round_memory)
         entry["pivot"] = pivot
+        round_memory[-1]["pivot_direction_taken"] = pivot["pivot_direction"]
+        round_memory[-1]["pivoted_to"] = pivot["new_idea"]
         progress("pivot_done", {"iteration": iteration, "new_idea": pivot["new_idea"],
                                 "pivot_direction": pivot["pivot_direction"]})
 
@@ -195,11 +195,7 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
     trace["kill_reason"] = kill_reason
     trace["finished_at"] = time.time()
     trace["duration_seconds"] = round(trace["finished_at"] - started, 1)
-
-    try:
-        trace["memory_deposited"] = update_memory(runs_dir, trace)
-    except Exception:
-        trace["memory_deposited"] = 0
+    trace["round_memory"] = round_memory
 
     run_dir = Path(runs_dir) / run_id
     write_artifacts(run_dir, trace, draft)
