@@ -59,12 +59,16 @@ def install_pipeline(monkeypatch, verdicts):
     calls = {"search": [], "examined": [], "revised": []}
     pending = list(verdicts)
 
-    def fake_search(query, limit=10):
-        calls["search"].append((query, limit))
+    def fake_search(element, on_tool_call=None):
+        calls["search"].append(element["id"])
+        if on_tool_call is not None:
+            on_tool_call("search_prior_art", {"query": f"{element['id']} agent query"})
         return [PATENT]
 
-    def fake_examine(matrix, description):
+    def fake_examine(matrix, description, on_tool_call=None):
         calls["examined"].append(description)
+        if on_tool_call is not None:
+            on_tool_call("search_prior_art", {"query": "examiner follow-up"})
         return pending.pop(0) if pending else ALLOWED
 
     def fake_revision(matrix, description, verdict, suggestions):
@@ -73,7 +77,7 @@ def install_pipeline(monkeypatch, verdicts):
         return {"description": f"revision {index}", "changes": f"narrowed round {index}"}
 
     monkeypatch.setattr(app_module, "decompose_invention", lambda description: ELEMENTS)
-    monkeypatch.setattr(app_module, "search_patents", fake_search)
+    monkeypatch.setattr(app_module, "find_prior_art", fake_search)
     monkeypatch.setattr(
         app_module, "generate_suggestions", lambda matrix, description: SUGGESTIONS
     )
@@ -110,7 +114,7 @@ def test_analyse_returns_combined_payload(client):
     assert body["uncovered"] == ["E2"]
     assert body["suggestions"] == SUGGESTIONS
     assert body["verdict"] == ALLOWED
-    assert sorted(client.search_calls) == [("leave-on formulation", 3), ("metered dose", 3)]
+    assert sorted(client.search_calls) == ["E1", "E2"]  # one searcher agent per element
 
 
 def test_analyse_stops_at_the_first_patentable_verdict(client):
@@ -168,7 +172,7 @@ def test_analyse_stops_after_three_iterations(monkeypatch):
 def test_analyse_surfaces_examiner_failures(monkeypatch):
     install_pipeline(monkeypatch, [ALLOWED])
 
-    def boom(matrix, description):
+    def boom(matrix, description, on_tool_call=None):
         raise ExaminationError("examiner unavailable")
 
     monkeypatch.setattr(app_module, "judge_patentability", boom)
@@ -228,6 +232,20 @@ def test_analyse_stream_reports_each_iteration(monkeypatch):
     assert any("iteration 2" in stage for stage in stages)
     assert any("revising" in stage for stage in stages)
     assert len(events[-1]["result"]["iterations"]) == 2
+
+
+def test_analyse_stream_reports_the_agents_searches(client):
+    response = client.post(
+        "/api/analyse/stream", json={"description": "A leave-on scalp foam."}
+    )
+
+    stages = [
+        event.get("stage", "")
+        for event in _stream_events(response)
+        if event["event"] == "progress"
+    ]
+    assert any("E1 searcher: E1 agent query" in stage for stage in stages)
+    assert any("examiner search: examiner follow-up" in stage for stage in stages)
 
 
 def test_analyse_stream_reports_failures_as_an_event(monkeypatch):

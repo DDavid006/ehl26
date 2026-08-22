@@ -46,6 +46,19 @@
   }
   button[disabled] { background: #9bb4e8; cursor: progress; }
   .status { color: var(--muted); }
+  .activity {
+    margin: 0;
+    padding: 12px 12px 12px 28px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: #f6f8fc;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: #33415c;
+  }
+  .activity li { margin: 2px 0; }
   .error { color: #b3261e; }
   section { margin-top: 32px; }
   h2 { font-size: 17px; margin: 0 0 12px; }
@@ -97,13 +110,18 @@
 <body>
 <main>
   <h1>Patentability analyser</h1>
-  <p class="lede">Describe the invention. Elements are rows, prior-art references are columns; hover a filled cell to read the matching sentence. <strong>Bright green cells are gaps &mdash; nothing in the prior art covers them.</strong> An examiner judges each round; a rejected invention is revised and re-analysed up to three times.</p>
+  <p class="lede">Describe the invention. Elements are rows, prior-art references are columns; hover a filled cell to read the matching sentence. <strong>Bright green cells are gaps &mdash; nothing in the prior art covers them.</strong> An examiner judges each round; a rejected invention is revised and re-analysed up to three times. Each element gets its own searcher agent, and the examiner runs its own follow-up searches &mdash; both are logged below as they work.</p>
 
   <textarea id="description" placeholder="A leave-on foam that delivers sunscreen to the scalp through dense hair without rinsing."></textarea>
   <div class="row">
     <button id="run">Analyse</button>
     <span class="status" id="status"></span>
   </div>
+
+  <section id="activity-section" hidden>
+    <h2>Agent activity</h2>
+    <ol class="activity" id="activity"></ol>
+  </section>
 
   <div id="results" hidden>
     <section>
@@ -259,6 +277,18 @@ function render(data) {
   $("results").hidden = false;
 }
 
+let lastActivity = "";
+
+// The stream repeats the current stage on every heartbeat, so only log changes.
+function logActivity(stage) {
+  if (!stage || stage === lastActivity) return;
+  lastActivity = stage;
+  const item = document.createElement("li");
+  item.textContent = stage;
+  $("activity").appendChild(item);
+  $("activity").scrollTop = $("activity").scrollHeight;
+}
+
 async function analyse() {
   const description = $("description").value.trim();
   const status = $("status");
@@ -269,6 +299,9 @@ async function analyse() {
   }
   $("run").disabled = true;
   status.className = "status";
+  $("activity").innerHTML = "";
+  $("activity-section").hidden = false;
+  lastActivity = "";
   const started = Date.now();
   let stage = "starting";
   const tick = setInterval(() => {
@@ -302,7 +335,7 @@ async function analyse() {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.event === "progress") stage = event.stage;
+        if (event.event === "progress") { stage = event.stage; logActivity(event.stage); }
         else if (event.event === "result") result = event.result;
         else if (event.event === "error") failure = event.detail;
       }

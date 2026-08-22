@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+from typing import Callable, Optional
 
 from dotenv import load_dotenv
 
-from decompose import extract_json_object, generate_text, strip_fences
+from agents import Tool, run_agent
+from decompose import extract_json_object, strip_fences
+from patent_client import search_patents
 
 load_dotenv()
 
 VERDICT_KEYS = ("patentable", "reasoning")
+SEARCH_LIMIT = 5
+SEARCH_BUDGET = 4
 
 PROMPT_TEMPLATE = """You are a patent examiner deciding whether to allow or reject the \
 invention below over the prior art found for it.
@@ -38,9 +43,26 @@ the references, return false.
 - Be strict, like a first-action rejection. Most descriptions at this stage are not patentable; \
 a hopeful verdict is worse than a blocking one.
 
+You may call search_prior_art to run your own searches before ruling, and you should: the \
+matrix was built from the applicant's own keywords, so search the uncovered elements yourself \
+with the wording a practitioner in the field would use before accepting any of them as a gap. \
+You have at most {budget} searches. Cite anything you find in the reasoning.
+
 Return JSON only. No prose, no explanation, no markdown code fences. A single JSON object with \
 exactly these keys:
 {{"patentable": true, "reasoning": "..."}}"""
+
+
+SEARCH_TOOL_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": "Keywords to search prior art for, as a practitioner would phrase them.",
+        }
+    },
+    "required": ["query"],
+}
 
 
 class ExaminationError(ValueError):
@@ -70,11 +92,25 @@ def _parse_response(text: str) -> dict:
     return {"patentable": patentable, "reasoning": reasoning.strip()}
 
 
-def judge_patentability(matrix: dict, description: str) -> dict:
+def _search_tool() -> Tool:
+    return Tool(
+        name="search_prior_art",
+        description="Search patent references for a keyword query. Returns id, title and abstract.",
+        parameters=SEARCH_TOOL_PARAMETERS,
+        func=lambda query: search_patents(query, limit=SEARCH_LIMIT),
+    )
+
+
+def judge_patentability(
+    matrix: dict,
+    description: str,
+    on_tool_call: Optional[Callable[[str, dict], None]] = None,
+) -> dict:
     """Return ``{"patentable": bool, "reasoning": str}`` for ``description`` over ``matrix``.
 
-    Retries once if the model response cannot be parsed, then raises
-    :class:`ExaminationError`.
+    The examiner runs as an agent: it may call ``search_prior_art`` to check the
+    uncovered elements with its own wording before ruling. Retries once if the
+    response cannot be parsed, then raises :class:`ExaminationError`.
     """
     if not isinstance(matrix, dict) or not matrix:
         raise ExaminationError("matrix must be a non-empty dict")
@@ -84,11 +120,20 @@ def judge_patentability(matrix: dict, description: str) -> dict:
     prompt = PROMPT_TEMPLATE.format(
         description=description.strip(),
         matrix=json.dumps(matrix, default=str, separators=(",", ":")),
+        budget=SEARCH_BUDGET,
     )
     last_error: ExaminationError | None = None
     for _ in range(2):
         try:
-            return _parse_response(generate_text(prompt, ExaminationError))
+            return _parse_response(
+                run_agent(
+                    prompt,
+                    [_search_tool()],
+                    ExaminationError,
+                    max_tool_calls=SEARCH_BUDGET,
+                    on_tool_call=on_tool_call,
+                )
+            )
         except ExaminationError as exc:
             last_error = exc
     raise last_error if last_error else ExaminationError("examination failed")
