@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PatentLoop Mission Control</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header><span class="eyebrow">AUTONOMOUS IP SYSTEM</span><h1>PatentLoop</h1><p>Idea to auditable feasibility decision and provisional draft.</p></header>
+    <section class="card">
+      <form id="launch">
+        <label for="idea">Invention idea</label>
+        <textarea id="idea" rows="9" placeholder="Describe the mechanism, structure, or method steps..."></textarea>
+        <button type="submit">Launch run</button>
+      </form>
+    </section>
+    <section id="mission" class="card hidden">
+      <div class="row"><h2 id="verdict">RUNNING</h2><a id="download" class="hidden" href="#">Download PDF</a></div>
+      <pre id="events"></pre>
+    </section>
+  </main>
+<script>
+const form = document.querySelector("#launch"), mission = document.querySelector("#mission");
+const events = document.querySelector("#events"), verdict = document.querySelector("#verdict"), download = document.querySelector("#download");
+let runId;
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const idea = document.querySelector("#idea").value.trim();
+  if (!idea) return;
+  const response = await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({idea})});
+  const data = await response.json(); runId = data.run_id; mission.classList.remove("hidden"); poll();
+});
+async function poll() {
+  const response = await fetch(`/api/runs/${runId}/events`), data = await response.json();
+  events.textContent = data.log.join("\n");
+  const summary = await (await fetch(`/api/runs/${runId}`)).json();
+  verdict.textContent = summary.verdict || "RUNNING";
+  if (summary.verdict === "DRAFTED") { download.href = `/api/runs/${runId}/download`; download.classList.remove("hidden"); }
+  if (!["DRAFTED","KILLED_SATURATED","KILLED_INFEASIBLE","FAILED"].includes(summary.verdict)) setTimeout(poll, 1200);
+}
+</script>
+</body>
+</html>

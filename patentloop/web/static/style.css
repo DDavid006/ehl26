@@ -1,0 +1,13 @@
+:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0a0d14; color: #e8edf7; }
+body { margin: 0; background: radial-gradient(circle at top right, #15233d, #0a0d14 55%); min-height: 100vh; }
+.shell { max-width: 880px; margin: 0 auto; padding: 8vh 24px; }
+.eyebrow { color: #66d9ef; font-size: .75rem; letter-spacing: .18em; }
+h1 { font-size: clamp(3rem, 10vw, 6rem); margin: .2em 0; }
+h2 { margin: 0; }
+.card { background: #111827dd; border: 1px solid #26344d; border-radius: 14px; padding: 24px; margin-top: 24px; box-shadow: 0 16px 50px #0005; }
+label { display: block; color: #aebbd1; margin-bottom: 10px; }
+textarea { box-sizing: border-box; width: 100%; resize: vertical; background: #0b1220; border: 1px solid #33445f; border-radius: 8px; color: inherit; padding: 14px; font: inherit; }
+button, a { display: inline-block; margin-top: 16px; border: 0; border-radius: 7px; padding: 11px 18px; background: #30b8d6; color: #07101b; font-weight: 700; text-decoration: none; cursor: pointer; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+pre { white-space: pre-wrap; color: #a8bed7; min-height: 120px; }
+.hidden { display: none; }

@@ -1,62 +1,97 @@
-# ehl26
+# PatentLoop
 
-Patent clearance and drafting: a multi-agent workflow plus a web GUI for
-submitting invention ideas and reviewing what the agents found.
+PatentLoop is an unattended feasibility, prior-art, overlap, pivot, and
+provisional-drafting pipeline. A single idea trigger ends in exactly one of
+`DRAFTED`, `KILLED_SATURATED`, or `KILLED_INFEASIBLE`.
 
-## What it does
-
-For one invention idea:
-
-1. **search** — five parallel prior-art agents hit different sources (USPTO
-   Patent Public Search full text, CPC classification sweep, Google Patents
-   semantic + citation graph, competitor/assignee portfolios, non-patent
-   literature). Each reports only references it actually opened.
-2. **assess** — one agent does a claim-element comparison and returns `clear`
-   or `blocked`, naming the blocking claims and the features that read on them.
-3. **redesign** (only if blocked) — a researcher checks whether the idea is
-   technically plausible, replaces every infringing feature with a
-   non-infringing alternative, adds new features, and the revised idea goes
-   back through step 1.
-4. **draft** (only if clear) — an agent writes a provisional-application draft
-   (spec, embodiments, numbered claims, abstract, prior-art section) and pushes
-   it to a branch.
-
-Nothing is filed with the USPTO. The output is a screening pass over public US
-sources plus a draft for a human attorney.
-
-## Layout
-
-- `.devin/skills/patent-clearance/` — the workflow (`workflow.py`) and its
-  `SKILL.md`. Run it with the `run_workflow` tool.
-- `gui/` — Flask app: submit an idea, watch a run, read the verdict, blocking
-  references, redesign and drafted claims.
-- `runs/<run_id>/` — per-run state (git-ignored): `idea.json`, `state.json`,
-  `workflow.py` (the skill workflow with the submitted idea substituted in),
-  and `run.log`.
-
-## Running the GUI
+## Quick start
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m flask --app gui.app run --port 5000
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+export DEVIN_API_KEY=...
+# Or use PATENTLOOP_BACKEND=openai with OPENAI_API_KEY.
+export USPTO_ODP_API_KEY=...  # optional when Devin patent-search fallback is available
+.venv/bin/python run.py --idea "A concrete mechanism with sensors and method steps"
 ```
 
-Submitting the form creates a queued run and writes that run's `workflow.py`.
-The agent fan-out is driven by the `run_workflow` tool rather than by the web
-process, so progress is pushed back into the GUI through the CLI:
+`run.py` also accepts `--idea-file`, `--max-iterations`, and `--run-id`. It
+prints the verdict and run folder last. Missing required keys fail before live
+work begins; no canned or synthetic records are used.
+
+The default judge backend is Devin (`PATENTLOOP_BACKEND=devin`). Each call
+creates a Devin v1 session, polls it to completion, validates its JSON Schema
+output, and stores session id, URL, request, and raw poll responses under
+`llm/`. `PATENTLOOP_BACKEND=openai` selects the OpenAI-compatible alternative.
+Patent search uses USPTO ODP when `USPTO_ODP_API_KEY` is set; otherwise a
+role-prompted Devin browser session must open and report each real patent
+record. If neither path is configured, the run fails fast.
+
+Embeddings never require an API key: PatentLoop lazily downloads and caches
+the CPU `sentence-transformers` `all-MiniLM-L6-v2` model. The first run needs
+network access and may be warmed up explicitly:
 
 ```bash
-python -m gui.cli status <run_id> running --workflow-run-id wfr-...
-python -m gui.cli round  <run_id> --file round1.json   # assess output (+ optional "redesign" key)
-python -m gui.cli draft  <run_id> --file draft.json    # drafter output
-python -m gui.cli log    <run_id> "5 searchers dispatched"
+.venv/bin/python -c "from patentloop.embed import embed; embed(['warm up'])"
 ```
 
-The run page polls `/runs/<run_id>/state` every 5s, so a live run updates
-without a reload.
+The model cache is configurable with `PATENTLOOP_MODEL_CACHE`. Recommendation:
+preinstall/cache this model in the environment blueprint for reproducible
+hackathon startup, but the blueprint is intentionally unchanged here.
+
+## Web UI
+
+```bash
+.venv/bin/python -m flask --app patentloop.web.app run --port 5000
+```
+
+`POST /api/runs` with `{"idea": "..."}` is the only trigger. Progress is
+available from `/api/runs/<id>/events`; a drafted PDF is downloaded from
+`/api/runs/<id>/download`.
+
+## Scores and gates
+
+For every extracted element, PatentLoop searches Semantic Scholar, arXiv,
+OpenAlex, Crossref, and optional GitHub. Documents without abstracts are
+discarded. For element embedding `e` and each of its top-ten document
+embeddings `d`, `element_novelty(e) = 1 - max(cos(e, d))`.
+`novelty_score = round(100 * (0.5 * mean(element_novelty) + 0.5 *
+min(element_novelty)))`; the minimum term prevents one fully-covered element
+being averaged away.
+
+USPTO ODP full-text/claim search (and optional EPO OPS) ranks hits by embedding
+similarity. Claim mappings are weighted `maps=1.0`, `partial=0.5`, `none=0`.
+For each patent, `patent_overlap = sum(weights) / n_elements`, and
+`overlap_score = round(100 * max(patent_overlap))`; the runner-up is retained.
+Claim quotes must be literal substrings of retrieved claims, and citation ids
+must belong to retrieved documents.
+
+The hard feasibility gate requires two independent LLM judgments (`doable` and
+`scoped`) plus at least three elements, concrete structural/step language, and
+no aspiration-only pattern. A failed judgment or rule immediately yields
+`KILLED_INFEASIBLE`. Otherwise, `novelty_score >= 55` and `overlap_score <= 45`
+yield `DRAFTED`. Other iterations pivot. A pivot is saturated when cosine
+similarity to the previous pivot is greater than `0.88` and overlap is at least
+`55` in two consecutive iterations, or the fifth iteration is reached with
+overlap above the gate.
+
+## Audit artifacts
+
+Each `runs/<run_id>/` contains `report.md`, `prior_art.json`, `trace.json`,
+and (only for `DRAFTED`) `draft_application.md` and
+`draft_application.pdf`. Untouched source responses are written to
+`raw/<iteration>/<source>_<hash>.json`; prompts and raw LLM completions are
+written to `llm/<sequence>_<agent>.json`. Every normalized record stores its
+source and raw path. `trace.json` records ordered agent events, input digests,
+artifact paths, LLM log paths, and Devin session URLs, allowing every report
+number to be followed back to retrieved data.
 
 ## Tests
 
 ```bash
 .venv/bin/python -m pytest -q
+.venv/bin/python -m compileall -q patentloop run.py
 ```
+
+All PatentLoop tests mock HTTP and LLM calls; the live source path is never
+replaced by fake data.
