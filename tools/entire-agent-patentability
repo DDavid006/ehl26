@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Entire external agent plugin exposing this app's run transcripts.
+
+Entire discovers plugins as ``entire-agent-<name>`` executables on ``$PATH``
+and talks to them one stateless subcommand at a time (JSON on stdin/stdout,
+raw bytes for transcripts). This plugin makes the analyser's own transcripts -
+``.entire/agent-logs/<run-id>.jsonl``, one exact ask and its raw output per
+line - readable by ``entire session attach <run-id> --agent patentability``,
+which checkpoints the run against the repository's history.
+
+Protocol: https://docs.entire.io/agents/external-agent-plugins
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import sys
+from pathlib import Path
+
+PROTOCOL_VERSION = 1
+NAME = "patentability"
+LOG_SUBDIR = Path(".entire") / "agent-logs"
+
+INFO = {
+    "protocol_version": PROTOCOL_VERSION,
+    "name": NAME,
+    "type": "Patentability analyser",
+    "description": "Patentability analyser - OpenAI search and comparison agents",
+    "is_preview": True,
+    "protected_dirs": [str(LOG_SUBDIR)],
+    "hook_names": [],
+    "capabilities": {
+        "hooks": False,
+        "transcript_analyzer": True,
+        "transcript_preparer": False,
+        "token_calculator": False,
+        "text_generator": False,
+        "hook_response_writer": False,
+        "subagent_aware_extractor": False,
+    },
+}
+
+
+def repo_root() -> Path:
+    return Path(os.getenv("ENTIRE_REPO_ROOT") or Path.cwd())
+
+
+def session_dir(repo_path: str | None = None) -> Path:
+    override = os.getenv("ENTIRE_AGENT_LOG_DIR")
+    if override:
+        return Path(override)
+    return Path(repo_path or repo_root()) / LOG_SUBDIR
+
+
+def entries(session_ref: str) -> list[dict]:
+    path = Path(session_ref)
+    if not path.is_file():
+        return []
+    parsed = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed.append(json.loads(line))
+        except ValueError:
+            continue
+    return parsed
+
+
+def emit(payload) -> None:
+    json.dump(payload, sys.stdout)
+    sys.stdout.write("\n")
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("subcommand")
+    parser.add_argument("--repo-path")
+    parser.add_argument("--session-dir")
+    parser.add_argument("--session-id")
+    parser.add_argument("--session-ref")
+    parser.add_argument("--path")
+    parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--max-size", type=int, default=1 << 20)
+    args, _ = parser.parse_known_args(argv)
+    command = args.subcommand
+
+    if command == "info":
+        emit(INFO)
+    elif command == "detect":
+        emit({"present": session_dir().is_dir()})
+    elif command == "get-session-dir":
+        emit({"session_dir": str(session_dir(args.repo_path))})
+    elif command == "get-session-id":
+        payload = json.load(sys.stdin)
+        emit({"session_id": payload.get("session_id", "")})
+    elif command == "resolve-session-file":
+        directory = Path(args.session_dir or session_dir())
+        emit({"session_file": str(directory / f"{args.session_id}.jsonl")})
+    elif command == "read-session":
+        payload = json.load(sys.stdin)
+        session_id = payload.get("session_id", "")
+        ref = payload.get("transcript_path") or str(session_dir() / f"{session_id}.jsonl")
+        records = entries(ref)
+        started = records[0].get("at") if records else None
+        emit(
+            {
+                "session_id": session_id,
+                "agent_name": NAME,
+                "repo_path": str(repo_root()),
+                "session_ref": ref,
+                "start_time": started,
+                "native_data": None,
+                "modified_files": [],
+                "new_files": [],
+                "deleted_files": [],
+            }
+        )
+    elif command == "write-session":
+        json.load(sys.stdin)  # transcripts are written by the app itself
+    elif command == "read-transcript":
+        path = Path(args.session_ref or "")
+        sys.stdout.buffer.write(path.read_bytes() if path.is_file() else b"")
+    elif command == "chunk-transcript":
+        raw = sys.stdin.buffer.read()
+        size = max(args.max_size, 1)
+        chunks = [
+            base64.b64encode(raw[start : start + size]).decode("ascii")
+            for start in range(0, len(raw), size)
+        ]
+        emit({"chunks": chunks})
+    elif command == "reassemble-transcript":
+        payload = json.load(sys.stdin)
+        for chunk in payload.get("chunks") or []:
+            sys.stdout.buffer.write(base64.b64decode(chunk))
+    elif command == "format-resume-command":
+        emit({"command": f"curl -s localhost:8000/api/logs/{args.session_id}"})
+    elif command == "get-transcript-position":
+        path = Path(args.path or "")
+        emit({"position": path.stat().st_size if path.is_file() else 0})
+    elif command == "extract-modified-files":
+        # The analyser writes no files; only its asks and outputs are of interest.
+        path = Path(args.path or "")
+        emit({"files": [], "current_position": path.stat().st_size if path.is_file() else 0})
+    elif command == "extract-prompts":
+        prompts = [
+            entry["ask"]
+            for entry in entries(args.session_ref or "")
+            if entry.get("type") == "exchange" and entry.get("ask")
+        ]
+        emit({"prompts": prompts})
+    elif command == "extract-summary":
+        records = entries(args.session_ref or "")
+        label = next(
+            (entry.get("label") for entry in records if entry.get("type") == "run_started"), ""
+        )
+        exchanges = [entry for entry in records if entry.get("type") == "exchange"]
+        if not records:
+            emit({"summary": "", "has_summary": False})
+        else:
+            tasks = ", ".join(sorted({entry.get("task", "") for entry in exchanges})) or "none"
+            emit(
+                {
+                    "summary": f"Patentability analysis of {label!r}: "
+                    f"{len(exchanges)} model exchanges ({tasks}).",
+                    "has_summary": True,
+                }
+            )
+    else:
+        print(f"unsupported subcommand {command!r}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import agent_log
 from coverage import build_matrix
 from decompose import decompose_invention
 from examine import judge_patentability
@@ -72,10 +73,16 @@ def _collect_patents(elements: list[dict]) -> list[dict]:
     if not queries:
         return []
 
+    # The searches run on pool threads but belong to the caller's transcript,
+    # which a worker thread does not inherit.
+    run = agent_log.current_run()
+
+    def search(query: str) -> list[dict]:
+        with agent_log.using(run):
+            return search_patents(query, PATENTS_PER_ELEMENT)
+
     with ThreadPoolExecutor(max_workers=min(len(queries), 8)) as pool:
-        per_query = list(
-            pool.map(lambda query: search_patents(query, limit=PATENTS_PER_ELEMENT), queries)
-        )
+        per_query = list(pool.map(search, queries))
 
     patents: list[dict] = []
     seen: set[str] = set()
@@ -91,6 +98,7 @@ def _collect_patents(elements: list[dict]) -> list[dict]:
 
 def _run_pipeline(description: str, progress: "queue.Queue[str] | None" = None) -> dict[str, Any]:
     def note(stage: str) -> None:
+        agent_log.note(stage)
         if progress is not None:
             progress.put(stage)
 
@@ -136,6 +144,7 @@ def _run_iterations(description: str, progress: "queue.Queue[str] | None" = None
     """
 
     def note(stage: str) -> None:
+        agent_log.note(stage)
         if progress is not None:
             progress.put(stage)
 
@@ -177,12 +186,31 @@ def _run_iterations(description: str, progress: "queue.Queue[str] | None" = None
     }
 
 
+def _analyse(description: str, progress: "queue.Queue[str] | None" = None) -> dict[str, Any]:
+    """Run the analysis inside an Entire transcript and return it with the log."""
+    run = agent_log.start_run(description[:200])
+    try:
+        result = _run_iterations(description, progress)
+    finally:
+        agent_log.finish_run(run)
+    return {**result, "run_id": run.run_id, "log": run.entries}
+
+
 @app.post("/api/analyse")
 def analyse(request: AnalyseRequest) -> dict[str, Any]:
     description = request.description.strip()
     if not description:
         raise HTTPException(status_code=422, detail="description must not be empty")
-    return _run_iterations(description)
+    return _analyse(description)
+
+
+@app.get("/api/logs/{run_id}")
+def run_log(run_id: str) -> dict[str, Any]:
+    """The recorded asks and outputs of an earlier run."""
+    entries = agent_log.read_run(run_id)
+    if not entries:
+        raise HTTPException(status_code=404, detail=f"no transcript for run {run_id}")
+    return {"run_id": run_id, "log": entries}
 
 
 def _stream_events(description: str) -> Iterator[str]:
@@ -193,7 +221,7 @@ def _stream_events(description: str) -> Iterator[str]:
     """
     progress: queue.Queue[str] = queue.Queue()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_run_iterations, description, progress)
+        future = pool.submit(_analyse, description, progress)
         stage = "starting"
         while True:
             try:

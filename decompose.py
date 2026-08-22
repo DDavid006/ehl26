@@ -119,6 +119,7 @@ def _generate(description: str) -> str:
             description=description.strip(),
         ),
         DecompositionError,
+        task="decompose",
     )
 
 

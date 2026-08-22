@@ -3,12 +3,13 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import agent_log
 import app as app_module
+import coverage as coverage_module
 from app import app
 from decompose import DecompositionError
 from examine import ExaminationError
 from suggest import SuggestionError
-
 
 ELEMENTS = [
     {"id": "E1", "text": "a leave-on delivery format", "search_terms": ["leave-on formulation"]},
@@ -47,11 +48,21 @@ RESULT_KEYS = [
     "description",
     "elements",
     "iterations",
+    "log",
     "patents",
+    "run_id",
     "suggestions",
     "uncovered",
     "verdict",
 ]
+
+
+@pytest.fixture(autouse=True)
+def transcripts(tmp_path, monkeypatch):
+    """Keep run transcripts out of the repo and out of the Entire CLI."""
+    monkeypatch.setenv("ENTIRE_AGENT_LOG_DIR", str(tmp_path / "agent-logs"))
+    monkeypatch.setattr(agent_log, "ATTACH_ENABLED", False)
+    return tmp_path / "agent-logs"
 
 
 def install_pipeline(monkeypatch, verdicts):
@@ -72,6 +83,15 @@ def install_pipeline(monkeypatch, verdicts):
         index = len(calls["revised"])
         return {"description": f"revision {index}", "changes": f"narrowed round {index}"}
 
+    def keyword_judgement(elements, keys, patent):
+        """Stand in for the model's judgement so no test reaches OpenAI."""
+        verdicts = {}
+        for key, element in zip(keys, elements):
+            covered, evidence = coverage_module.is_covered(element, patent)
+            verdicts[key] = {"covered": covered, "evidence": evidence}
+        return verdicts
+
+    monkeypatch.setattr(coverage_module, "judge_patent", keyword_judgement)
     monkeypatch.setattr(app_module, "decompose_invention", lambda description: ELEMENTS)
     monkeypatch.setattr(app_module, "search_patents", fake_search)
     monkeypatch.setattr(
@@ -111,6 +131,24 @@ def test_analyse_returns_combined_payload(client):
     assert body["suggestions"] == SUGGESTIONS
     assert body["verdict"] == ALLOWED
     assert sorted(client.search_calls) == [("leave-on formulation", 3), ("metered dose", 3)]
+    assert body["run_id"].startswith("run-")
+    assert body["log"][0]["type"] == "run_started"
+    assert body["log"][-1]["type"] == "run_finished"
+
+
+def test_analyse_writes_a_transcript_that_the_log_route_serves(client, transcripts):
+    body = client.post("/api/analyse", json={"description": "A leave-on scalp foam."}).json()
+
+    assert (transcripts / f"{body['run_id']}.jsonl").is_file()
+    served = client.get(f"/api/logs/{body['run_id']}")
+    assert served.status_code == 200
+    assert served.json() == {"run_id": body["run_id"], "log": body["log"]}
+    notes = [entry["message"] for entry in body["log"] if entry["type"] == "note"]
+    assert "decomposing the invention into functional elements" in notes
+
+
+def test_log_route_404s_for_an_unknown_run(client):
+    assert client.get("/api/logs/run-nope").status_code == 404
 
 
 def test_analyse_stops_at_the_first_patentable_verdict(client):
@@ -212,6 +250,8 @@ def test_analyse_stream_emits_progress_then_result(client):
     assert sorted(body) == RESULT_KEYS
     assert body["uncovered"] == ["E2"]
     assert body["verdict"] == ALLOWED
+    # the streamed run keeps its own transcript, reachable after the fact
+    assert client.get(f"/api/logs/{body['run_id']}").json()["log"] == body["log"]
 
 
 def test_analyse_stream_reports_each_iteration(monkeypatch):

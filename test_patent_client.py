@@ -5,34 +5,20 @@ import pytest
 import patent_client
 
 
-class FakeResponse:
-    def __init__(self, *, json_data=None, status=200):
-        self._json = json_data
-        self.status_code = status
-
-    def json(self):
-        return self._json
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-
-def hit(link, title="Distributed sensor data aggregation", snippet="A method for aggregating measurements."):
-    return {"link": link, "title": title, "snippet": snippet}
+def record(patent_id="US10123456B2", **overrides):
+    base = {
+        "patent_id": patent_id,
+        "title": "Distributed sensor data aggregation",
+        "abstract": "A method for aggregating measurements.",
+        "assignee": "Northfield Instruments, Inc.",
+        "date": "2018-11-13",
+    }
+    base.update(overrides)
+    return base
 
 
-def serper_payload(*hits):
-    return {"organic": list(hits)}
-
-
-def google_hits(count, start=0):
-    return [hit(f"https://patents.google.com/patent/US1012345{i}B2/en") for i in range(start, start + count)]
-
-
-@pytest.fixture(autouse=True)
-def api_key(monkeypatch):
-    monkeypatch.setenv("SERPER_API_KEY", "test-key")
+def records(count, start=0):
+    return [record(f"US1012345{index}B2") for index in range(start, start + count)]
 
 
 @pytest.fixture(autouse=True)
@@ -42,94 +28,121 @@ def fallback_file(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_page_fetches(monkeypatch):
-    """Patent pages are never fetched; any GET is a bug."""
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("search_patents must not fetch patent pages")
-
-    monkeypatch.setattr(patent_client.requests, "get", forbidden)
-
-
-def install_transport(monkeypatch, *, search=None, search_error=None):
-    def fake_post(url, headers=None, json=None, timeout=None):
-        assert url == patent_client.SERPER_ENDPOINT
-        assert headers["X-API-KEY"] == "test-key"
-        assert json["q"].endswith(" patent")
-        if search_error is not None:
-            raise search_error
-        return FakeResponse(json_data=search)
-
-    monkeypatch.setattr(patent_client.requests, "post", fake_post)
+def no_network(monkeypatch):
+    """Every search goes through the model; the client itself never fetches."""
+    monkeypatch.setattr(
+        patent_client,
+        "search_text",
+        lambda *args, **kwargs: pytest.fail("the search model was not stubbed"),
+    )
 
 
-def test_builds_records_from_search_results(monkeypatch):
-    install_transport(monkeypatch, search=serper_payload(*google_hits(3)))
+def install_search(monkeypatch, answer=None, *, error=None):
+    calls = []
 
-    results = patent_client.search_patents("sensor fusion")
+    def fake_search(prompt, error_cls, task="search"):
+        calls.append({"prompt": prompt, "error_cls": error_cls, "task": task})
+        if error is not None:
+            raise error
+        return answer if isinstance(answer, str) else json.dumps(answer)
 
+    monkeypatch.setattr(patent_client, "search_text", fake_search)
+    return calls
+
+
+def test_asks_the_model_to_search_the_patent_hosts(monkeypatch):
+    calls = install_search(monkeypatch, records(3))
+
+    results = patent_client.search_patents("sensor fusion", limit=3)
+
+    prompt = calls[0]["prompt"]
+    assert "sensor fusion" in prompt
+    assert "patents.google.com" in prompt and "worldwide.espacenet.com" in prompt
+    assert calls[0]["task"] == "search: sensor fusion"
     assert len(results) == 3
     assert all(sorted(r) == sorted(patent_client.RESULT_KEYS) for r in results)
-    assert results[0] == {
-        "patent_id": "US10123450B2",
-        "title": "Distributed sensor data aggregation",
-        "abstract": "A method for aggregating measurements.",
-        "assignee": None,
-        "date": None,
-    }
+    assert results[0] == record("US10123450B2")
+
+
+def test_reads_records_wrapped_in_prose_or_fences(monkeypatch):
+    install_search(
+        monkeypatch,
+        "Here is what I found:\n```json\n" + json.dumps(records(1)) + "\n```\nHope that helps.",
+    )
+
+    assert patent_client.search_patents("sensor fusion")[0]["patent_id"] == "US10123450B2"
 
 
 def test_strips_site_boilerplate_from_titles(monkeypatch):
-    install_transport(
+    install_search(
         monkeypatch,
-        search=serper_payload(
-            hit(
-                "https://patents.google.com/patent/US20150101870A1/en",
-                title="US20150101870A1 - Weight sensing - Google Patents",
-            )
-        ),
+        [record("US20150101870A1", title="US20150101870A1 - Weight sensing - Google Patents")],
     )
 
     assert patent_client.search_patents("weight sensing")[0]["title"] == "Weight sensing"
 
 
-def test_reads_patent_id_from_espacenet_url(monkeypatch):
-    espacenet = hit(
-        "https://worldwide.espacenet.com/patent/search?CC=EP&NR=3210987A1",
-        title="Adaptive thermal management",
-        snippet=None,
-    )
-    install_transport(monkeypatch, search=serper_payload(*google_hits(2), espacenet))
-
-    result = patent_client.search_patents("thermal management")[-1]
-
-    assert result["patent_id"] == "EP3210987A1"
-    assert result["title"] == "Adaptive thermal management"
-    assert result["abstract"] is None
-    assert result["assignee"] is None
-    assert result["date"] is None
-
-
-def test_filters_non_patent_hosts(monkeypatch):
-    install_transport(
+def test_reads_the_publication_number_from_a_url_when_the_field_is_missing(monkeypatch):
+    install_search(
         monkeypatch,
-        search=serper_payload(
-            hit("https://example.com/blog/patent-news"),
-            hit("https://en.wikipedia.org/wiki/Patent"),
-            *google_hits(1),
-        ),
+        [
+            {
+                "url": "https://worldwide.espacenet.com/patent/search?CC=EP&NR=3210987A1",
+                "title": "Adaptive thermal management",
+            }
+        ],
+    )
+
+    assert patent_client.search_patents("thermal management") == [
+        {
+            "patent_id": "EP3210987A1",
+            "title": "Adaptive thermal management",
+            "abstract": None,
+            "assignee": None,
+            "date": None,
+        }
+    ]
+
+
+def test_drops_entries_without_a_well_formed_publication_number(monkeypatch):
+    install_search(
+        monkeypatch,
+        [
+            record(patent_id=None),
+            record(patent_id="a patent about sensors"),
+            record(patent_id="12345"),
+            *records(2),
+        ],
     )
 
     results = patent_client.search_patents("sensor fusion")
 
-    assert [r["patent_id"] for r in results] == ["US10123450B2"]
+    assert [r["patent_id"] for r in results] == ["US10123450B2", "US10123451B2"]
 
 
-def test_no_usable_result_falls_back(monkeypatch):
-    install_transport(
-        monkeypatch,
-        search=serper_payload(hit("https://example.com/blog/patent-news")),
-    )
+def test_normalises_spacing_and_case_in_publication_numbers(monkeypatch):
+    install_search(monkeypatch, [record("us 10,123,456 b2")])
+
+    assert patent_client.search_patents("sensor fusion")[0]["patent_id"] == "US10123456B2"
+
+
+def test_deduplicates_repeated_publications(monkeypatch):
+    install_search(monkeypatch, [record(), record(), *records(3)])
+
+    ids = [r["patent_id"] for r in patent_client.search_patents("sensor fusion")]
+
+    assert len(ids) == len(set(ids))
+
+
+def test_respects_limit(monkeypatch):
+    install_search(monkeypatch, records(6))
+
+    assert len(patent_client.search_patents("sensor fusion", limit=3)) == 3
+    assert patent_client.search_patents("sensor fusion", limit=0) == []
+
+
+def test_an_empty_result_falls_back_to_the_local_corpus(monkeypatch):
+    install_search(monkeypatch, [])
 
     results = patent_client.search_patents("sensor fusion")
 
@@ -137,42 +150,14 @@ def test_no_usable_result_falls_back(monkeypatch):
     assert results[0]["patent_id"] == patent_client.FALLBACK_ENTRIES[0]["patent_id"]
 
 
-def test_skips_results_without_a_patent_id(monkeypatch):
-    install_transport(
-        monkeypatch,
-        search=serper_payload(
-            hit("https://patents.google.com/?q=sensor+fusion"),
-            *google_hits(3),
-        ),
-    )
+def test_an_unparsable_answer_falls_back(monkeypatch):
+    install_search(monkeypatch, "I could not find anything relevant.")
 
-    results = patent_client.search_patents("sensor fusion")
-
-    assert [r["patent_id"] for r in results] == ["US10123450B2", "US10123451B2", "US10123452B2"]
+    assert len(patent_client.search_patents("sensor fusion")) == 5
 
 
-def test_deduplicates_repeated_patent_ids(monkeypatch):
-    duplicate = "https://patents.google.com/patent/US10123456B2/en"
-    install_transport(
-        monkeypatch,
-        search=serper_payload(hit(duplicate), hit(duplicate + "?oq=x"), *google_hits(3)),
-    )
-
-    results = patent_client.search_patents("sensor fusion")
-
-    ids = [r["patent_id"] for r in results]
-    assert len(ids) == len(set(ids))
-
-
-def test_respects_limit(monkeypatch):
-    install_transport(monkeypatch, search=serper_payload(*google_hits(6)))
-
-    assert len(patent_client.search_patents("sensor fusion", limit=3)) == 3
-    assert patent_client.search_patents("sensor fusion", limit=0) == []
-
-
-def test_search_error_falls_back(monkeypatch, fallback_file):
-    install_transport(monkeypatch, search_error=RuntimeError("serper is down"))
+def test_a_search_failure_falls_back(monkeypatch, fallback_file):
+    install_search(monkeypatch, error=RuntimeError("401 from OpenAI"))
 
     results = patent_client.search_patents("sensor fusion")
 
@@ -181,21 +166,13 @@ def test_search_error_falls_back(monkeypatch, fallback_file):
     assert all(sorted(r) == sorted(patent_client.RESULT_KEYS) for r in results)
 
 
-def test_missing_api_key_falls_back(monkeypatch):
-    monkeypatch.delenv("SERPER_API_KEY", raising=False)
-    install_transport(monkeypatch, search=serper_payload())
-
-    assert len(patent_client.search_patents("sensor fusion")) == 5
-
-
 def test_timeout_falls_back(monkeypatch):
-    install_transport(monkeypatch, search=serper_payload(*google_hits(5)))
-    clock = iter([0, 99, 99])
+    install_search(monkeypatch, records(5))
+    clock = iter([0, 999, 999])
     monkeypatch.setattr(patent_client.time, "monotonic", lambda: next(clock))
 
     results = patent_client.search_patents("sensor fusion")
 
-    assert len(results) == 5
     assert results[0]["patent_id"] == patent_client.FALLBACK_ENTRIES[0]["patent_id"]
 
 
@@ -204,11 +181,9 @@ def test_existing_fallback_file_is_used_and_normalized(monkeypatch, fallback_fil
         json.dumps([{"patent_id": "US1B1", "title": "", "abstract": "a"}]),
         encoding="utf-8",
     )
-    install_transport(monkeypatch, search=serper_payload())
+    install_search(monkeypatch, [])
 
-    results = patent_client.search_patents("sensor fusion")
-
-    assert results == [
+    assert patent_client.search_patents("sensor fusion") == [
         {
             "patent_id": "US1B1",
             "title": None,
@@ -220,13 +195,13 @@ def test_existing_fallback_file_is_used_and_normalized(monkeypatch, fallback_fil
 
 
 def test_fallback_respects_limit(monkeypatch):
-    install_transport(monkeypatch, search=serper_payload())
+    install_search(monkeypatch, [])
 
     assert len(patent_client.search_patents("sensor fusion", limit=2)) == 2
 
 
 def test_corrupt_fallback_file_returns_empty(monkeypatch, fallback_file):
     fallback_file.write_text("not json", encoding="utf-8")
-    install_transport(monkeypatch, search=serper_payload())
+    install_search(monkeypatch, [])
 
     assert patent_client.search_patents("sensor fusion") == []

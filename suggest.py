@@ -159,6 +159,7 @@ def _generate(matrix: dict, description: str, element_ids: list[str], patent_ids
             patent_ids=", ".join(patent_ids) or "none",
         ),
         SuggestionError,
+        task="suggest",
     )
 
 
@@ -229,7 +230,7 @@ def generate_revision(matrix: dict, description: str, verdict: dict, suggestions
     last_error: SuggestionError | None = None
     for _ in range(2):
         try:
-            return _parse_revision(generate_text(prompt, SuggestionError))
+            return _parse_revision(generate_text(prompt, SuggestionError, task="revise"))
         except SuggestionError as exc:
             last_error = exc
     raise last_error if last_error else SuggestionError("revision generation failed")

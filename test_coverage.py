@@ -1,5 +1,30 @@
+import json
+
+import pytest
+
 import coverage
 from coverage import build_matrix, is_covered
+
+
+@pytest.fixture(autouse=True)
+def offline_model(monkeypatch):
+    """Keyword matching is the fallback, so most tests run with no model."""
+
+    def unavailable(prompt, error_cls, task="generate"):
+        raise error_cls("model offline")
+
+    monkeypatch.setattr(coverage, "generate_text", unavailable)
+
+
+def install_judge(monkeypatch, answer):
+    prompts = []
+
+    def judge(prompt, error_cls, task="generate"):
+        prompts.append({"prompt": prompt, "task": task})
+        return answer(prompt) if callable(answer) else answer
+
+    monkeypatch.setattr(coverage, "generate_text", judge)
+    return prompts
 
 
 ELEMENTS = [
@@ -167,6 +192,51 @@ def test_is_covered_is_swappable(monkeypatch):
 
     assert matrix["uncovered"] == []
     assert matrix["coverage"]["E4"]["US1234567"] == {"covered": True, "evidence": "stub"}
+
+
+def test_the_model_decides_coverage_when_it_is_reachable(monkeypatch):
+    verdicts = {
+        "E1": {"covered": True, "evidence": "A composition comprising an ultraviolet filter."},
+        "E2": {"covered": False, "evidence": ""},
+        "E3": {"covered": False, "evidence": ""},
+        "E4": {"covered": False, "evidence": ""},
+    }
+    prompts = install_judge(monkeypatch, json.dumps(verdicts))
+
+    matrix = build_matrix(ELEMENTS, PATENTS)
+
+    # One judgement per patent, not per cell, and each names the patent it judged.
+    assert len(prompts) == len(PATENTS)
+    assert {call["task"] for call in prompts} == {"compare: US1234567", "compare: US7654321"}
+    assert "a delivery format applied without rinsing" in prompts[0]["prompt"]
+    assert matrix["coverage"]["E1"]["US1234567"] == verdicts["E1"]
+    # E2 is a keyword match the model rejected, so its judgement is what counts.
+    assert matrix["coverage"]["E2"]["US1234567"] == {"covered": False, "evidence": ""}
+    assert matrix["uncovered"] == ["E2", "E3", "E4"]
+
+
+def test_a_fenced_or_chatty_judgement_is_still_read(monkeypatch):
+    install_judge(
+        monkeypatch,
+        '```json\n{"E1": {"covered": true, "evidence": " spaced "}}\n```',
+    )
+
+    matrix = build_matrix([ELEMENTS[0]], [PATENTS[0]])
+
+    assert matrix["coverage"]["E1"]["US1234567"] == {"covered": True, "evidence": "spaced"}
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["not json at all", "{}", '{"E1": "covered"}', '{"E9": {"covered": true}}'],
+)
+def test_an_unusable_judgement_falls_back_to_keyword_matching(monkeypatch, answer):
+    install_judge(monkeypatch, answer)
+
+    matrix = build_matrix(ELEMENTS, PATENTS)
+
+    assert matrix["coverage"]["E1"]["US1234567"]["covered"] is True
+    assert matrix["uncovered"] == ["E4"]
 
 
 def test_inputs_are_not_mutated():

@@ -1,5 +1,6 @@
 import pytest
 
+import agent_log
 import llm
 
 PROMPT = "Return JSON only."
@@ -95,3 +96,86 @@ def test_unknown_provider_raises(monkeypatch):
 
     with pytest.raises(ValueError, match="unknown LLM_PROVIDER"):
         llm.generate_text(PROMPT, ValueError)
+
+
+def responses(*texts, other=()):
+    output = [{"type": kind} for kind in other]
+    output.append(
+        {"type": "message", "content": [{"type": "output_text", "text": text} for text in texts]}
+    )
+    return {"output": output}
+
+
+def test_search_asks_the_responses_api_with_the_web_search_tool(monkeypatch):
+    calls = install_post(monkeypatch, FakeResponse(payload=responses("[]")))
+
+    assert llm.search_text(PROMPT, ValueError) == "[]"
+    assert calls[0]["url"] == llm.OPENAI_RESPONSES_ENDPOINT
+    assert calls[0]["json"]["tools"] == [{"type": "web_search"}]
+    assert calls[0]["json"]["input"] == PROMPT
+    assert calls[0]["timeout"] == llm.SEARCH_TIMEOUT
+
+
+def test_search_reads_only_the_assistant_text_of_the_payload(monkeypatch):
+    install_post(
+        monkeypatch,
+        FakeResponse(payload=responses("[{", '"patent_id": "EP1"}]', other=("web_search_call",))),
+    )
+
+    assert llm.search_text(PROMPT, ValueError) == '[{"patent_id": "EP1"}]'
+
+
+def test_search_falls_through_to_the_next_model_when_rate_limited(monkeypatch):
+    calls = install_post(
+        monkeypatch,
+        FakeResponse(status_code=429, text="rate limit"),
+        FakeResponse(payload=responses("[]")),
+    )
+
+    assert llm.search_text(PROMPT, ValueError) == "[]"
+    assert [call["json"]["model"] for call in calls] == ["model-a", "model-b"]
+
+
+def test_search_without_an_api_key_raises_the_caller_error(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY is not set"):
+        llm.search_text(PROMPT, ValueError)
+
+
+def test_every_ask_and_output_reaches_the_transcript(monkeypatch, tmp_path):
+    monkeypatch.setenv("ENTIRE_AGENT_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(agent_log, "ATTACH_ENABLED", False)
+    install_post(
+        monkeypatch,
+        FakeResponse(payload=completion("GENERATED")),
+        FakeResponse(payload=responses("SEARCHED")),
+    )
+
+    run = agent_log.start_run("transcript")
+    llm.generate_text(PROMPT, ValueError, task="decompose")
+    llm.search_text("find prior art", ValueError, task="search: foam")
+    agent_log.finish_run(run)
+
+    exchanges = [entry for entry in run.entries if entry["type"] == "exchange"]
+    assert [(entry["task"], entry["ask"], entry["output"]) for entry in exchanges] == [
+        ("decompose", PROMPT, "GENERATED"),
+        ("search: foam", "find prior art", "SEARCHED"),
+    ]
+    assert [entry["model"] for entry in exchanges] == ["openai", "openai/web_search"]
+
+
+def test_a_failed_ask_is_recorded_with_its_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("ENTIRE_AGENT_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(agent_log, "ATTACH_ENABLED", False)
+    install_post(monkeypatch, FakeResponse(status_code=401, text="bad key"))
+
+    run = agent_log.start_run("transcript")
+    with pytest.raises(RuntimeError):
+        llm.generate_text(PROMPT, ValueError, task="decompose")
+    agent_log.finish_run(run)
+
+    exchange = next(entry for entry in run.entries if entry["type"] == "exchange")
+    assert exchange["ask"] == PROMPT
+    assert exchange["output"] == ""
+    assert "401" in exchange["error"]
