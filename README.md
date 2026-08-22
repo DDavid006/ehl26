@@ -67,6 +67,12 @@ while overlap stays ≥ 60, the run stops as `KILLED_SATURATED`.
 - `overlap_score`: computed the same way over patents actually returned by Google Patents; the
   element-by-element overlap mapping (which idea element collides with which patent text) is in
   `iterations[i].patent_search.matched_patents`, raw API payloads alongside.
+- Coverage matrix (`patentloop/coverage.py`): a deterministic, LLM-free element-by-patent matrix
+  built per iteration with `build_matrix(elements, patents)` — pure keyword-overlap matching
+  (`is_covered`) between each element's search terms and the patent title/abstract, with the
+  matching sentence as evidence. `uncovered` lists elements no retrieved patent covers, i.e.
+  where the idea's potential novelty lives. Stored in `trace.json` / `prior_art.json` under
+  `coverage_matrix` and rendered in `report.md` per iteration.
 - Feasibility gate: the full chain of reasoning for both checks is logged verbatim in
   `iterations[i].feasibility_gate` and reproduced in `report.md` — never summarized away.
 - The final `report.md` contains the complete iteration trace: every idea version, every score,
