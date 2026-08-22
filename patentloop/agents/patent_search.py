@@ -10,6 +10,13 @@ from . import AUTONOMOUS_INSTRUCTION
 from ..errors import EvidenceFailure
 
 WEIGHTS = {"maps": 1.0, "partial": 0.5, "none": 0.0}
+SEARCH_ANGLES = (
+    ("uspto-fulltext", "Search USPTO Patent Public Search for keyword and phrase matches."),
+    ("classification", "Identify relevant CPC classes and inspect their busiest recent US records."),
+    ("semantic-citations", "Search Google Patents and follow similar-document and citation links."),
+    ("assignee-portfolios", "Identify active competitors and inspect their US patent portfolios."),
+    ("non-patent-literature", "Search papers, standards, product documentation, and public demonstrations."),
+)
 
 
 def validate_claim_quote(verdict: dict, claim_text: str) -> dict:
@@ -41,7 +48,15 @@ class PatentSearchAgent:
         self.llm, self.sources = llm, sources
         self.allow_devin_search = allow_devin_search
 
-    def _devin_search(self, idea_text: str, keywords: list[str]) -> list[dict]:
+    def _devin_search(
+        self,
+        idea_text: str,
+        keywords: list[str],
+        *,
+        iteration: int,
+        angle: tuple[str, str],
+    ) -> list[dict]:
+        angle_id, angle_detail = angle
         schema = {
             "name": "patent_search_hits",
             "schema": {
@@ -73,7 +88,8 @@ class PatentSearchAgent:
             + "You are a patent-search specialist. Use your browser to open real "
             "public patent database records. Open every record you report. Never "
             "invent or infer a reference that you did not open. Return verbatim "
-            "claim text captured from the opened record.\n"
+            "claim text captured from the opened record. Your assigned search angle "
+            f"is {angle_id}: {angle_detail}\n"
             + json.dumps(
                 {"idea": idea_text, "keywords": keywords},
                 indent=2,
@@ -84,10 +100,10 @@ class PatentSearchAgent:
             prompt,
             schema,
             agent="devin_patent_search",
-            title="PatentLoop patent search",
+            title=f"PatentLoop · Patent Examiner · {angle_id} · iteration {iteration}",
             iteration=iteration,
             role="Patent Examiner",
-            task="Search opened patent records and return verified claim evidence.",
+            task=f"Run the {angle_id} clearance search and return verified claim evidence.",
         )
         evidence_path = getattr(self.llm, "last_log_path", None)
         return [
@@ -101,6 +117,7 @@ class PatentSearchAgent:
                 "claim1": hit["claim_text"],
                 "url": hit["url"],
                 "source": "devin_patent_search",
+                "search_angle": angle_id,
                 "raw_path": evidence_path,
             }
             for hit in output.get("hits", [])
@@ -155,17 +172,27 @@ class PatentSearchAgent:
                 unique_hits[identifier] = hit
         hits = list(unique_hits.values())
         if not hits and self.allow_devin_search:
-            try:
-                hits = self._devin_search(idea_text, keywords)
-            except Exception as exc:
-                record_source_error(
-                    {
-                        "source": "devin_patent_search",
-                        "query": keywords,
-                        "error": str(exc),
-                    }
-                )
-                hits = []
+            def run_angle(angle):
+                try:
+                    return self._devin_search(
+                        idea_text,
+                        keywords,
+                        iteration=iteration,
+                        angle=angle,
+                    )
+                except Exception as exc:
+                    record_source_error(
+                        {
+                            "source": f"devin_patent_search:{angle[0]}",
+                            "query": keywords,
+                            "error": str(exc),
+                        }
+                    )
+                    return []
+
+            with ThreadPoolExecutor(max_workers=len(SEARCH_ANGLES)) as pool:
+                angle_results = pool.map(run_angle, SEARCH_ANGLES)
+                hits = [hit for result in angle_results for hit in result]
         if not hits:
             error_suffix = ""
             if source_errors:

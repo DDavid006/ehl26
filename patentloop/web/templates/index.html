@@ -62,6 +62,11 @@
       </section>
 
       <section class="card">
+        <h2>Team assignments</h2>
+        <div class="staff" id="staff"><p class="empty">no agents dispatched yet</p></div>
+      </section>
+
+      <section class="card">
         <h2>Live agent log</h2>
         <pre class="log" id="log">awaiting launch…</pre>
       </section>
@@ -204,14 +209,44 @@ if (attached) {
   poll();
 }
 
+function renderStaff(assignments) {
+  const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[char]));
+  const board = el("staff");
+  if (!assignments.length) {
+    board.innerHTML = `<p class="empty">no agents dispatched yet</p>`;
+    return;
+  }
+  board.innerHTML = assignments.map((assignment) => {
+    const duration = assignment.duration_seconds != null
+      ? `${Math.round(assignment.duration_seconds)}s`
+      : assignment.started_at ? "running" : "queued";
+    const acus = assignment.acu_usage != null ? ` · ${assignment.acu_usage} ACU` : "";
+    const link = assignment.session_url
+      ? `<a href="${escapeHtml(assignment.session_url)}" target="_blank" rel="noreferrer">session</a>`
+      : "";
+    return `<div class="member ${escapeHtml(assignment.status)}">`
+      + `<span class="who">${escapeHtml(assignment.role_title)}</span>`
+      + `<span class="state">${escapeHtml(assignment.status)}</span>`
+      + `<span class="task">${escapeHtml(assignment.task || assignment.remit || "")}</span>`
+      + `<span class="meta">${escapeHtml(duration)}${escapeHtml(acus)} ${link}</span>`
+      + (assignment.error ? `<span class="err">${escapeHtml(assignment.error)}</span>` : "")
+      + `</div>`;
+  }).join("");
+}
+
 async function poll() {
   try {
-    const [eventsResponse, summaryResponse] = await Promise.all([
+    const [eventsResponse, summaryResponse, staffResponse] = await Promise.all([
       fetch(`/api/runs/${runId}/events`),
       fetch(`/api/runs/${runId}`),
+      fetch(`/api/runs/${runId}/staff`),
     ]);
     const {log = [], events = []} = await eventsResponse.json();
     const summary = await summaryResponse.json();
+    const {assignments = []} = await staffResponse.json();
+    renderStaff(assignments);
     const logNode = el("log");
     logNode.textContent = log.join("\n") || "queued…";
     logNode.scrollTop = logNode.scrollHeight;
