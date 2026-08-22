@@ -26,9 +26,6 @@
           <input id="iterations" type="number" min="1" max="8" value="5">
           <button id="launchButton" type="submit">Launch autonomous run</button>
         </form>
-        <p class="hint">One trigger, no human in the loop. The run ends in
-          DRAFTED, KILLED_SATURATED or KILLED_INFEASIBLE, with every score traced
-          back to the live documents it came from.</p>
       </section>
 
       <section class="card hidden" id="verdictCard">
@@ -56,12 +53,10 @@
           <div class="gauge">
             <div class="row"><span>novelty score</span><b id="noveltyValue">—</b></div>
             <div class="track"><div class="fill novelty" id="noveltyFill"></div><div class="gate" style="left:55%"></div></div>
-            <div class="gatelabel">gate: &ge; 55 to draft</div>
           </div>
           <div class="gauge">
             <div class="row"><span>claim overlap score</span><b id="overlapValue">—</b></div>
             <div class="track"><div class="fill overlap" id="overlapFill"></div><div class="gate" style="left:45%"></div></div>
-            <div class="gatelabel">gate: &le; 45 to draft</div>
           </div>
         </div>
       </section>
