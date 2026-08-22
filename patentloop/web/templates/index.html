@@ -3,42 +3,232 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PatentLoop Mission Control</title>
+  <title>PatentLoop — Mission Control</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <main class="shell">
-    <header><span class="eyebrow">AUTONOMOUS IP SYSTEM</span><h1>PatentLoop</h1><p>Idea to auditable feasibility decision and provisional draft.</p></header>
-    <section class="card">
-      <form id="launch">
-        <label for="idea">Invention idea</label>
-        <textarea id="idea" rows="9" placeholder="Describe the mechanism, structure, or method steps..."></textarea>
-        <button type="submit">Launch run</button>
-      </form>
-    </section>
-    <section id="mission" class="card hidden">
-      <div class="row"><h2 id="verdict">RUNNING</h2><a id="download" class="hidden" href="#">Download PDF</a></div>
-      <pre id="events"></pre>
-    </section>
+  <div class="topbar">
+    <div class="brand">
+      <h1>PatentLoop</h1>
+      <span>autonomous patent feasibility &amp; drafting</span>
+    </div>
+    <div class="pill" id="status"><span class="dot"></span><span id="statusText">idle</span></div>
+  </div>
+
+  <main>
+    <div class="column">
+      <section class="card">
+        <h2>Invention idea</h2>
+        <form id="launch">
+          <label for="idea">raw idea text</label>
+          <textarea id="idea" rows="10" placeholder="Describe the mechanism, structure, or method steps of the invention..."></textarea>
+          <label for="iterations" style="margin-top:14px">max pivot iterations</label>
+          <input id="iterations" type="number" min="1" max="8" value="5">
+          <button id="launchButton" type="submit">Launch autonomous run</button>
+        </form>
+        <p class="hint">One trigger, no human in the loop. The run ends in
+          DRAFTED, KILLED_SATURATED or KILLED_INFEASIBLE, with every score traced
+          back to the live documents it came from.</p>
+      </section>
+
+      <section class="card hidden" id="verdictCard">
+        <h2>Verdict</h2>
+        <p class="verdict" id="verdict">RUNNING</p>
+        <p class="reason" id="reason">agents dispatched</p>
+        <div class="links" id="links"></div>
+      </section>
+
+      <section class="card hidden" id="lineageCard">
+        <h2>Idea lineage</h2>
+        <div class="lineage" id="lineage"></div>
+      </section>
+    </div>
+
+    <div class="column">
+      <section class="card">
+        <h2>Agent pipeline</h2>
+        <div class="pipeline" id="pipeline"></div>
+      </section>
+
+      <section class="card">
+        <h2>Evidence scores</h2>
+        <div class="gauges">
+          <div class="gauge">
+            <div class="row"><span>novelty score</span><b id="noveltyValue">—</b></div>
+            <div class="track"><div class="fill novelty" id="noveltyFill"></div><div class="gate" style="left:55%"></div></div>
+            <div class="gatelabel">gate: &ge; 55 to draft</div>
+          </div>
+          <div class="gauge">
+            <div class="row"><span>claim overlap score</span><b id="overlapValue">—</b></div>
+            <div class="track"><div class="fill overlap" id="overlapFill"></div><div class="gate" style="left:45%"></div></div>
+            <div class="gatelabel">gate: &le; 45 to draft</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Live agent log</h2>
+        <pre class="log" id="log">awaiting launch…</pre>
+      </section>
+    </div>
   </main>
+
 <script>
-const form = document.querySelector("#launch"), mission = document.querySelector("#mission");
-const events = document.querySelector("#events"), verdict = document.querySelector("#verdict"), download = document.querySelector("#download");
-let runId;
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const idea = document.querySelector("#idea").value.trim();
-  if (!idea) return;
-  const response = await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({idea})});
-  const data = await response.json(); runId = data.run_id; mission.classList.remove("hidden"); poll();
+const AGENTS = [
+  ["extract", "Extract claim elements"],
+  ["feasibility", "Feasibility &amp; scope gate"],
+  ["research", "Research agent — novelty"],
+  ["patent_search", "Patent search — claim overlap"],
+  ["pivot", "Expert pivot"],
+  ["drafting", "Drafting attorney"],
+];
+const TERMINAL = ["DRAFTED", "KILLED_SATURATED", "KILLED_INFEASIBLE", "FAILED"];
+
+const el = (id) => document.getElementById(id);
+const pipeline = el("pipeline");
+AGENTS.forEach(([key, label], index) => {
+  const node = document.createElement("div");
+  node.className = "node";
+  node.id = `node-${key}`;
+  node.innerHTML = `<span class="idx">${String(index + 1).padStart(2, "0")}</span>`
+    + `<span class="name">${label}</span><span class="state"></span>`
+    + `<span class="found"></span>`;
+  pipeline.appendChild(node);
 });
+
+let runId = null;
+
+el("launch").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const idea = el("idea").value.trim();
+  if (!idea) return;
+  el("launchButton").disabled = true;
+  setStatus("live", "run starting");
+  const response = await fetch("/api/runs", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({idea, max_iterations: Number(el("iterations").value) || 5}),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    setStatus("dead", data.error || "could not start");
+    el("launchButton").disabled = false;
+    return;
+  }
+  runId = data.run_id;
+  el("verdictCard").classList.remove("hidden");
+  poll();
+});
+
+function setStatus(kind, text) {
+  el("status").className = `pill ${kind}`;
+  el("statusText").textContent = text;
+}
+
+function summarize(event) {
+  const output = event.output || {};
+  if (event.agent === "extract" && output.elements) {
+    return `${output.elements.length} claim elements · field: ${output.field || "unknown"}`;
+  }
+  if (event.agent === "feasibility") {
+    return `doable: ${output.feasible ? "pass" : "fail"} · scoped: ${output.scoped ? "pass" : "fail"}`;
+  }
+  if (event.agent === "research") {
+    return `novelty ${output.novelty_score} · ${(output.closest_publications || []).length} papers retrieved`
+      + `${output.unverified_elements && output.unverified_elements.length ? ` · ${output.unverified_elements.length} unverified` : ""}`;
+  }
+  if (event.agent === "patent_search") {
+    const top = (output.patents || [])[0];
+    return `overlap ${output.overlap_score} · ${output.patents_examined ?? (output.patents || []).length} patents examined`
+      + (top ? ` · closest ${top.id || ""}` : "");
+  }
+  if (event.agent === "pivot") {
+    return (output.rationale || "new variant proposed").slice(0, 160);
+  }
+  if (event.agent === "drafting") {
+    return "provisional draft written";
+  }
+  return "";
+}
+
+function render(events, summary) {
+  const seen = new Map();
+  events.forEach((event) => seen.set(event.agent, event));
+  const lastAgent = events.length ? events[events.length - 1].agent : null;
+  const finished = TERMINAL.includes(summary.verdict);
+
+  AGENTS.forEach(([key]) => {
+    const node = el(`node-${key}`);
+    const event = seen.get(key);
+    node.classList.toggle("done", Boolean(event) && (key !== lastAgent || finished));
+    node.classList.toggle("active", key === lastAgent && !finished);
+    node.querySelector(".found").textContent = event ? summarize(event) : "";
+  });
+
+  const research = [...events].reverse().find((event) => event.agent === "research");
+  const patents = [...events].reverse().find((event) => event.agent === "patent_search");
+  if (research) {
+    const score = research.output.novelty_score;
+    el("noveltyValue").textContent = score;
+    el("noveltyFill").style.width = `${score}%`;
+  }
+  if (patents) {
+    const score = patents.output.overlap_score;
+    el("overlapValue").textContent = score;
+    el("overlapFill").style.width = `${score}%`;
+  }
+
+  const versions = events.filter((event) => event.agent === "extract").length;
+  if (versions) {
+    el("lineageCard").classList.remove("hidden");
+    el("lineage").innerHTML = Array.from({length: versions}, (_, index) =>
+      `<span class="chip ${index === versions - 1 ? "current" : ""}">idea v${index + 1}</span>`).join("");
+  }
+}
+
+function renderVerdict(summary) {
+  const verdict = summary.verdict || "RUNNING";
+  const node = el("verdict");
+  node.textContent = verdict;
+  node.className = "verdict"
+    + (verdict === "DRAFTED" ? " drafted" : verdict.startsWith("KILLED") ? " killed" : verdict === "FAILED" ? " failed" : "");
+  el("reason").textContent = summary.termination_reason || summary.error || "agents running";
+  if (!TERMINAL.includes(verdict)) return;
+  const links = [`<a href="/api/runs/${runId}/report" target="_blank">report.md</a>`,
+    `<a href="/api/runs/${runId}/events" target="_blank">trace.json</a>`];
+  if (verdict === "DRAFTED") links.unshift(`<a href="/api/runs/${runId}/download">download draft pdf</a>`);
+  el("links").innerHTML = links.join("");
+  setStatus(verdict === "DRAFTED" ? "done" : "dead", verdict.toLowerCase().replace("_", " "));
+  el("launchButton").disabled = false;
+}
+
+const attached = new URLSearchParams(location.search).get("run");
+if (attached) {
+  runId = attached;
+  el("verdictCard").classList.remove("hidden");
+  poll();
+}
+
 async function poll() {
-  const response = await fetch(`/api/runs/${runId}/events`), data = await response.json();
-  events.textContent = data.log.join("\n");
-  const summary = await (await fetch(`/api/runs/${runId}`)).json();
-  verdict.textContent = summary.verdict || "RUNNING";
-  if (summary.verdict === "DRAFTED") { download.href = `/api/runs/${runId}/download`; download.classList.remove("hidden"); }
-  if (!["DRAFTED","KILLED_SATURATED","KILLED_INFEASIBLE","FAILED"].includes(summary.verdict)) setTimeout(poll, 1200);
+  try {
+    const [eventsResponse, summaryResponse] = await Promise.all([
+      fetch(`/api/runs/${runId}/events`),
+      fetch(`/api/runs/${runId}`),
+    ]);
+    const {log = [], events = []} = await eventsResponse.json();
+    const summary = await summaryResponse.json();
+    const logNode = el("log");
+    logNode.textContent = log.join("\n") || "queued…";
+    logNode.scrollTop = logNode.scrollHeight;
+    render(events, summary);
+    renderVerdict(summary);
+    if (!TERMINAL.includes(summary.verdict)) {
+      setStatus("live", `running · ${events.length} agent events`);
+      setTimeout(poll, 2000);
+    }
+  } catch (error) {
+    setStatus("dead", "lost connection to run");
+  }
 }
 </script>
 </body>

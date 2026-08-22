@@ -80,6 +80,13 @@ def create_app(runs_dir: Path | str | None = None, runner=run_pipeline) -> Flask
         trace = json.loads((path / "trace.json").read_text()) if (path / "trace.json").exists() else []
         return jsonify({"run_id": run_id, "log": log, "events": trace})
 
+    @app.get("/api/runs/<run_id>/report")
+    def run_report(run_id: str):
+        report = run_dir_or_404(run_id) / "report.md"
+        if not report.is_file():
+            abort(404)
+        return send_file(report, mimetype="text/markdown")
+
     @app.get("/api/runs/<run_id>/download")
     def download_pdf(run_id: str):
         pdf = run_dir_or_404(run_id) / "draft_application.pdf"
