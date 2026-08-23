@@ -233,6 +233,74 @@ def search_patents_any(keywords: list[str], limit: int = 10) -> dict[str, Any]:
     return fallback
 
 
+def search_products(query: str, limit: int = 4) -> dict[str, Any]:
+    """General web search for existing commercial products/solutions matching the
+    query (non-patent novelty evidence). Serper if keyed, else DuckDuckGo."""
+    api_key = os.getenv("SERPER_API_KEY")
+    if api_key:
+        try:
+            response = requests.post(
+                SERPER_URL,
+                headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+                json={"q": f"{query} existing product", "num": min(limit * 3, 20)},
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            return {"records": [], "raw": {"provider": "serper", "error": str(exc)}}
+        if response.status_code != 200:
+            return {"records": [], "raw": {"provider": "serper",
+                                           "error": f"{response.status_code}: {response.text[:200]}"}}
+        payload = response.json()
+        records = []
+        for item in payload.get("organic") or []:
+            url = item.get("link") or ""
+            if "patents.google.com" in url:
+                continue
+            records.append({
+                "source": "web_product",
+                "title": item.get("title") or "",
+                "abstract": (item.get("snippet") or "")[:1500],
+                "url": url,
+            })
+            if len(records) >= limit:
+                break
+        return {"records": records, "raw": {"provider": "serper", "organic": payload.get("organic")}}
+    return _search_products_ddg(query, limit)
+
+
+def _search_products_ddg(query: str, limit: int) -> dict[str, Any]:
+    try:
+        response = requests.post(
+            DDG_URL,
+            data={"q": f"{query} existing product"},
+            headers={"User-Agent": BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"},
+            timeout=25,
+        )
+    except requests.RequestException as exc:
+        return {"records": [], "raw": {"provider": "duckduckgo", "error": str(exc)}}
+    if response.status_code != 200:
+        return {"records": [], "raw": {"provider": "duckduckgo",
+                                       "error": f"{response.status_code}: {response.text[:200]}"}}
+    records = []
+    for match in re.finditer(
+        r'class="result__a" href="(https?://[^"]+)"[^>]*>(.*?)</a>(.*?)(?=class="result__a"|$)',
+        response.text, re.DOTALL,
+    ):
+        url, title, block = match.groups()
+        if "patents.google.com" in url or "duckduckgo.com" in url:
+            continue
+        snippet_match = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', block, re.DOTALL)
+        records.append({
+            "source": "web_product",
+            "title": _strip_html(title),
+            "abstract": (_strip_html(snippet_match.group(1)) if snippet_match else "")[:1500],
+            "url": url,
+        })
+        if len(records) >= limit:
+            break
+    return {"records": records, "raw": {"provider": "duckduckgo"}}
+
+
 DDG_URL = "https://html.duckduckgo.com/html/"
 BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
