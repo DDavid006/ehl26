@@ -67,12 +67,22 @@ def run_loop(idea: str, runs_dir: str | Path = "runs", progress: ProgressFn = _n
         progress("patent_search", {"iteration": iteration})
         patent_search = run_patent_search(current, extraction)
         entry["patent_search"] = patent_search
-        matrix = build_matrix(elements_from_extraction(extraction), patent_search["records"])
+        prior_art = list(patent_search["records"])
+        for index, record in enumerate(research["records"][:20]):
+            prior_art.append({
+                "patent_id": f"NPL-{index + 1}",
+                "kind": "product" if record.get("source") == "web_product" else "literature",
+                "title": record.get("title"),
+                "abstract": record.get("abstract"),
+                "url": record.get("url"),
+            })
+        matrix = build_matrix(elements_from_extraction(extraction), prior_art)
         entry["coverage_matrix"] = matrix
         progress("coverage", {
             "iteration": iteration,
             "elements": [{"id": e["id"], "text": e["text"]} for e in matrix["elements"]],
             "patents": [{"patent_id": p.get("patent_id"), "title": p.get("title"),
+                         "kind": p.get("kind") or "patent",
                          "url": p.get("url")} for p in matrix["patents"]],
             "coverage": matrix["coverage"],
             "uncovered": matrix["uncovered"],
