@@ -40,10 +40,13 @@ def _get(url: str, *, params: dict | None = None, headers: dict | None = None,
 
 def search_semantic_scholar(query: str, limit: int = 5) -> dict[str, Any]:
     """Papers matching ``query``: {"records": [...], "raw": <api payload>}."""
-    response = _get(
-        SEMANTIC_SCHOLAR_URL,
-        params={"query": query, "limit": limit, "fields": "title,abstract,year,url,citationCount"},
-    )
+    try:
+        response = _get(
+            SEMANTIC_SCHOLAR_URL,
+            params={"query": query, "limit": limit, "fields": "title,abstract,year,url,citationCount"},
+        )
+    except RuntimeError as exc:
+        return {"records": [], "raw": {"error": str(exc)}}
     if response.status_code != 200:
         return {"records": [], "raw": {"error": f"{response.status_code}: {response.text[:200]}"}}
     payload = response.json()
@@ -61,10 +64,13 @@ def search_semantic_scholar(query: str, limit: int = 5) -> dict[str, Any]:
 
 
 def search_arxiv(query: str, limit: int = 5) -> dict[str, Any]:
-    response = _get(
-        ARXIV_URL,
-        params={"search_query": f"all:{query}", "max_results": limit},
-    )
+    try:
+        response = _get(
+            ARXIV_URL,
+            params={"search_query": f"all:{query}", "max_results": limit},
+        )
+    except RuntimeError as exc:
+        return {"records": [], "raw": {"error": str(exc)}}
     if response.status_code != 200:
         return {"records": [], "raw": {"error": f"{response.status_code}: {response.text[:200]}"}}
     records = []
@@ -94,11 +100,14 @@ def search_github(query: str, limit: int = 5) -> dict[str, Any]:
     token = os.getenv("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    response = _get(
-        GITHUB_URL,
-        params={"q": query, "per_page": limit, "sort": "stars"},
-        headers=headers,
-    )
+    try:
+        response = _get(
+            GITHUB_URL,
+            params={"q": query, "per_page": limit, "sort": "stars"},
+            headers=headers,
+        )
+    except RuntimeError as exc:
+        return {"records": [], "raw": {"error": str(exc)}}
     if response.status_code != 200:
         return {"records": [], "raw": {"error": f"{response.status_code}: {response.text[:200]}"}}
     payload = response.json()
@@ -123,11 +132,14 @@ def search_patents(keywords: list[str], limit: int = 10) -> dict[str, Any]:
     resolves (the service was retired), so Google Patents is the live source.
     """
     query = " ".join(keywords)
-    response = _get(
-        GOOGLE_PATENTS_URL,
-        params={"url": f"q={query}", "exp": ""},
-        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) PatentLoop/1.0"},
-    )
+    try:
+        response = _get(
+            GOOGLE_PATENTS_URL,
+            params={"url": f"q={query}", "exp": ""},
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) PatentLoop/1.0"},
+        )
+    except RuntimeError as exc:
+        return {"records": [], "raw": {"error": str(exc)}}
     if response.status_code != 200:
         return {"records": [], "raw": {"error": f"{response.status_code}: {response.text[:300]}"}}
     try:
