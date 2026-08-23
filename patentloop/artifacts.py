@@ -48,14 +48,12 @@ def _render_report(trace: dict[str, Any], draft: dict[str, Any] | None) -> str:
         lines += ["A provisional application draft was produced: see `draft_application.pdf` "
                   "(and `draft_application.md`).", ""]
 
-    memory_hits = trace.get("memory_hits") or []
-    if memory_hits:
-        lines += ["## Recalled from earlier runs (cross-run memory)", ""]
-        for hit in memory_hits:
-            lines.append(
-                f"- {hit.get('patent_id')} {hit.get('title')} — similarity "
-                f"{hit.get('similarity')} — first seen in run {hit.get('source_run_id')}"
-            )
+    round_memory = trace.get("round_memory") or []
+    if round_memory:
+        lines += ["## Round memory (reasoning passed to later rounds)", ""]
+        for item in round_memory:
+            lines.append(f"- Round {item.get('round')}: rejected because {item.get('why_rejected')} "
+                         f"→ pivoted toward: {item.get('pivot_direction_taken') or 'n/a'}")
         lines.append("")
 
     lines += ["## Idea lineage", ""]

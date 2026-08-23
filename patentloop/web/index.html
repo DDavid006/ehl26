@@ -100,6 +100,19 @@
   .card.gate { border-left-color: var(--amber); }
   .card.pivot { border-left-color: var(--purple); }
   .card.draft { border-left-color: var(--green); }
+  .card.decision {
+    border-left-color: var(--cyan); border-color: rgba(0,229,255,.35);
+    background: rgba(0,229,255,.06);
+  }
+  .card.decision.kill_infeasible, .card.decision.kill_saturated {
+    border-left-color: var(--red); border-color: rgba(255,77,109,.35);
+    background: rgba(255,77,109,.06);
+  }
+  .card.decision.draft {
+    border-left-color: var(--green); border-color: rgba(43,255,171,.35);
+    background: rgba(43,255,171,.06);
+  }
+  .card.decision .card-title { color: var(--text); }
   .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .card-title {
     font: 700 11px "Consolas", monospace; letter-spacing: 2px; text-transform: uppercase;
@@ -109,6 +122,8 @@
   .card.coverage .card-title, .card.gate .card-title { color: var(--amber); }
   .card.pivot .card-title { color: var(--purple); }
   .card.draft .card-title { color: var(--green); }
+  .hint { font: 11px/1.5 "Segoe UI", system-ui, sans-serif; color: var(--dim); margin-top: 4px; }
+  .summary-text { font: 13px/1.65 "Segoe UI", system-ui, sans-serif; color: var(--text); margin-top: 8px; }
   .badge {
     font: 700 10px "Consolas", monospace; letter-spacing: 1px; border-radius: 20px;
     padding: 3px 10px; border: 1px solid var(--line); color: var(--dim); text-transform: uppercase;
@@ -152,6 +167,7 @@
     color: var(--red); text-shadow: 0 0 16px rgba(255,77,109,.6);
   }
   #summary { margin-top: 10px; font-size: 14px; line-height: 1.6; }
+  #summary p + p { margin-top: 8px; }
   .links { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
   .links a {
     color: var(--cyan); border: 1px solid var(--line); border-radius: 6px;
@@ -256,19 +272,56 @@ function setBadge(badge, cls, text) {
 
 function metrics(box, entries) {
   const wrap = el('div', 'metrics');
-  for (const [label, value] of entries) {
+  for (const [label, value, tooltip] of entries) {
     const m = el('div', 'metric', label);
     m.prepend(el('b', '', String(value)));
+    if (tooltip) { m.title = tooltip; m.style.cursor = 'help'; }
     wrap.appendChild(m);
   }
   box.appendChild(wrap);
 }
 
+function hint(box, text) {
+  box.appendChild(el('div', 'hint', text));
+}
+
+const OUTCOME_LABELS = {
+  draft: 'Decision: draft the patent',
+  pivot: 'Decision: pivot the idea',
+  kill_infeasible: 'Decision: stop — not feasible',
+  kill_saturated: 'Decision: stop — field saturated'
+};
+
+function decisionCard(ev) {
+  const { box, badge } = card(`decision ${ev.outcome}`, OUTCOME_LABELS[ev.outcome] || 'Decision');
+  setBadge(badge, ev.outcome === 'draft' ? 'pass' : (ev.outcome === 'pivot' ? 'done' : 'fail'),
+           ev.outcome === 'draft' ? 'draft' : (ev.outcome === 'pivot' ? 'pivot' : 'stop'));
+  if (ev.novelty !== undefined) {
+    metrics(box, [
+      ['novelty', `${ev.novelty}/100`, 'How new the idea is versus published literature (higher is better; needs ≥ 60 to draft)'],
+      ['patent overlap', `${ev.overlap}/100`, 'How much existing patents already cover this idea (lower is better; needs ≤ 40 to draft)']
+    ]);
+  }
+  box.appendChild(el('div', 'summary-text', ev.summary || ''));
+}
+
 function coverageTable(ev) {
-  const { box, badge } = card('coverage', 'Coverage matrix — element × patent');
+  const { box, badge } = card('coverage', 'Coverage map — which patents cover which elements');
   setBadge(badge, ev.uncovered.length ? 'pass' : 'fail',
            ev.uncovered.length ? `${ev.uncovered.length} open` : 'all covered');
-  const patents = ev.patents.slice(0, 8);
+  hint(box, 'Each row is one element of the idea; columns are the 5 most damaging patents plus the most relevant non-patent prior art (papers/products, marked NPL) — the ones covering the most of the idea. ✕ means that prior art already discloses that element. Rows marked OPEN are the idea\u2019s free (potentially patentable) space.');
+  const coveredCount = p => ev.elements.reduce((n, element) => {
+    const cell = ((ev.coverage || {})[element.id] || {})[p.patent_id] || {};
+    return n + (cell.covered ? 1 : 0);
+  }, 0);
+  const rank = list => list
+    .map(p => [coveredCount(p), p])
+    .sort((a, b) => b[0] - a[0])
+    .filter(([n]) => n > 0)
+    .map(([, p]) => p);
+  const isPatent = p => !p.kind || p.kind === 'patent';
+  const patents = rank(ev.patents.filter(isPatent)).slice(0, 5)
+    .concat(rank(ev.patents.filter(p => !isPatent(p))).slice(0, 3));
   const scroll = el('div', 'matrix-scroll');
   const table = el('table', 'matrix');
   const headRow = el('tr');
@@ -279,6 +332,7 @@ function coverageTable(ev) {
     if (p.url) { a.href = p.url; a.target = '_blank'; }
     a.title = p.title || '';
     th.appendChild(a);
+    if (p.kind && p.kind !== 'patent') th.appendChild(el('div', 'hint', p.kind));
     headRow.appendChild(th);
   }
   headRow.appendChild(el('th', '', 'Status'));
@@ -314,43 +368,25 @@ function coverageTable(ev) {
 }
 
 let cards = {};
+let lastDecision = null;
 
-function memoryCard(ev) {
-  const block = el('div', 'iteration');
-  const head = el('div', 'iteration-head');
-  head.appendChild(el('span', '', 'Cross-run memory'));
-  block.appendChild(head);
-  const box = el('div', 'card pivot');
-  const cardHead = el('div', 'card-head');
-  cardHead.appendChild(el('span', 'card-title', 'Recalled prior art from earlier runs'));
-  const badge = el('span', 'badge done', `${ev.hits.length} recalled`);
-  cardHead.appendChild(badge);
-  box.appendChild(cardHead);
-  const list = el('ul');
-  ev.hits.forEach(h => {
-    const li = el('li', '', `\u21b3 ${h.patent_id}  ${h.title} `);
-    li.appendChild(el('span', 'chip', `sim ${h.similarity}`));
-    li.appendChild(el('span', 'chip', `from run ${h.source_run_id}`));
-    list.appendChild(li);
-  });
-  box.appendChild(list);
-  block.appendChild(box);
-  $('timeline').appendChild(block);
-}
+const STATUS_LABELS = {
+  DRAFTED: 'Patent draft ready',
+  KILLED_SATURATED: 'Stopped — field already patented',
+  KILLED_INFEASIBLE: 'Stopped — idea not feasible'
+};
 
 function handle(ev) {
   switch (ev.event) {
-    case 'memory':
-      memoryCard(ev);
-      break;
     case 'extract':
       currentIteration = iterationBlock(ev.iteration, ev.idea);
       cards = {};
       if (ev.iteration === 1) resetAgents(); else { resetAgents(); }
       break;
     case 'extracted': {
-      const { box, badge } = card('research', 'Element extraction');
+      const { box, badge } = card('research', 'Step 1 · Break the idea into technical elements');
       setBadge(badge, 'done', `${(ev.elements || []).length} elements`);
+      hint(box, 'The idea is split into its core building blocks; each one is checked against prior art separately.');
       const list = el('ul');
       (ev.elements || []).forEach((element, index) =>
         list.appendChild(el('li', '', `E${index + 1}  ${element}`)));
@@ -359,13 +395,18 @@ function handle(ev) {
     }
     case 'research':
       setAgent('research', 'active');
-      cards.research = card('research', 'Research agent — Semantic Scholar · arXiv · GitHub');
+      cards.research = card('research', 'Step 2 · Search research, code & existing products (Semantic Scholar · arXiv · GitHub · Web)');
+      hint(cards.research.box, 'Looks for papers, code, and existing commercial products that already describe or do what the idea does, then scores how novel it still is. An existing product counts against novelty just like a paper.');
       break;
     case 'research_done': {
       setAgent('research', 'done');
       const { box, badge } = cards.research;
       setBadge(badge, 'done', 'done');
-      metrics(box, [['novelty score', ev.novelty_score], ['documents retrieved', ev.documents_considered]]);
+      metrics(box, [
+        ['novelty score', `${ev.novelty_score}/100`, 'How new the idea is versus published literature (higher is better; needs ≥ 60 to draft)'],
+        ['documents retrieved', ev.documents_considered, 'Papers/repos actually read and judged for this iteration']
+      ]);
+      if ((ev.closest_prior_work || []).length) hint(box, 'Closest existing publications found:');
       if ((ev.closest_prior_work || []).length) {
         const list = el('ul');
         ev.closest_prior_work.forEach(w => {
@@ -381,7 +422,8 @@ function handle(ev) {
     }
     case 'patent_search':
       setAgent('patents', 'active');
-      cards.patents = card('patents', 'Patent search agent — Google Patents (US/EP/WIPO)');
+      cards.patents = card('patents', 'Step 3 · Search existing patents (Google Patents — US/EP/WIPO)');
+      hint(cards.patents.box, 'Finds granted patents and applications that overlap the idea\u2019s elements and scores the collision.');
       break;
     case 'coverage':
       coverageTable(ev);
@@ -390,7 +432,11 @@ function handle(ev) {
       setAgent('patents', 'done');
       const { box, badge } = cards.patents;
       setBadge(badge, 'done', 'done');
-      metrics(box, [['overlap score', ev.overlap_score], ['patents retrieved', ev.patents_considered]]);
+      metrics(box, [
+        ['overlap score', `${ev.overlap_score}/100`, 'How much existing patents already cover this idea (lower is better; needs ≤ 40 to draft)'],
+        ['patents retrieved', ev.patents_considered, 'Patent documents actually examined for this iteration']
+      ]);
+      if ((ev.matched_patents || []).length) hint(box, 'Patents that overlap this idea (chips show which elements collide):');
       if ((ev.matched_patents || []).length) {
         const list = el('ul');
         ev.matched_patents.forEach(p => {
@@ -404,38 +450,58 @@ function handle(ev) {
     }
     case 'feasibility':
       setAgent('gate', 'active');
-      cards.gate = card('gate', 'Feasibility gate — doable + scoped');
+      cards.gate = card('gate', 'Step 4 · Feasibility check');
+      hint(cards.gate.box, 'Two hard questions: can this actually be built (doable), and is it concrete enough to claim (scoped)? Failing either kills the run.');
       break;
     case 'feasibility_done': {
       setAgent('gate', ev.passed ? 'done' : null);
       const { box, badge } = cards.gate;
       setBadge(badge, ev.passed ? 'pass' : 'fail', ev.passed ? 'pass' : 'fail');
-      metrics(box, [['doable', ev.doable ? 'yes' : 'no'], ['scoped', ev.scoped ? 'yes' : 'no']]);
+      metrics(box, [
+        ['doable', ev.doable ? 'yes' : 'no', 'Can this actually be built without violating physics/engineering, with an inventive step?'],
+        ['scoped', ev.scoped ? 'yes' : 'no', 'Is it a concrete mechanism/method, not a broad aspiration?']
+      ]);
+      if (!ev.doable && ev.doable_reasoning) {
+        hint(box, 'Why DOABLE failed:');
+        box.appendChild(el('div', 'summary-text', ev.doable_reasoning));
+      }
+      if (!ev.scoped && ev.scoped_reasoning) {
+        hint(box, 'Why SCOPED failed:');
+        box.appendChild(el('div', 'summary-text', ev.scoped_reasoning));
+      }
       break;
     }
+    case 'decision':
+      lastDecision = ev;
+      decisionCard(ev);
+      break;
     case 'pivot':
       setAgent('pivot', 'active');
-      cards.pivot = card('pivot', `Expert pivot agent — ${ev.field} specialist`);
+      cards.pivot = card('pivot', `Step 5 · Expert pivot (${ev.field} specialist)`);
+      hint(cards.pivot.box, 'A domain expert reshapes the idea toward a nearby gap that prior art doesn\u2019t cover. It is given the full reasoning history of every previous round \u2014 what was tried, why it was rejected, and which directions were already taken \u2014 so it never repeats itself. The next iteration re-tests the new version.');
       break;
     case 'pivot_done': {
       setAgent('pivot', 'done');
       const { box, badge } = cards.pivot;
       setBadge(badge, 'done', ev.pivot_direction || 'pivoted');
-      box.appendChild(el('div', 'reason', `→ ${ev.new_idea}`));
+      hint(box, 'New version of the idea for the next iteration:');
+      box.appendChild(el('div', 'summary-text', ev.new_idea));
       break;
     }
     case 'drafting':
       setAgent('draft', 'active');
-      cards.draft = card('draft', 'Drafting agent — provisional application');
+      cards.draft = card('draft', 'Final step · Drafting the provisional patent application');
+      hint(cards.draft.box, 'The idea cleared every gate — a full provisional application draft is being written.');
       break;
     case 'done': {
       if (ev.status === 'DRAFTED') {
         setAgent('draft', 'done');
         if (cards.draft) setBadge(cards.draft.badge, 'done', 'drafted');
       }
-      const { box, badge } = card(ev.status === 'DRAFTED' ? 'draft' : 'gate', 'Loop terminated');
-      setBadge(badge, ev.status === 'DRAFTED' ? 'pass' : 'fail', ev.status);
-      if (ev.kill_reason) box.appendChild(el('div', 'reason', ev.kill_reason));
+      const { box, badge } = card(ev.status === 'DRAFTED' ? 'draft' : 'gate', 'Run finished');
+      setBadge(badge, ev.status === 'DRAFTED' ? 'pass' : 'fail',
+               ev.status === 'DRAFTED' ? 'drafted' : 'stopped');
+      box.appendChild(el('div', 'summary-text', STATUS_LABELS[ev.status] || ev.status));
       break;
     }
     case 'result': showResult(ev); break;
@@ -453,19 +519,24 @@ function handle(ev) {
 function showResult(ev) {
   $('result').classList.remove('hidden');
   const v = $('verdict');
-  v.textContent = ev.status;
+  v.textContent = STATUS_LABELS[ev.status] || ev.status;
   v.className = 'verdict ' + ev.status;
   const summaries = {
-    DRAFTED: 'The idea survived every gate: novelty confirmed against live literature, no blocking claim overlap found at the USPTO, and the feasibility gate passed. A provisional patent application draft has been generated.',
-    KILLED_SATURATED: 'The loop pivoted through variants but claim overlap with existing patents stayed high and the pivot space converged — the field is saturated.',
-    KILLED_INFEASIBLE: 'The feasibility gate rejected the idea: it is either not technically doable or too broadly scoped to support a real patent claim.'
+    DRAFTED: 'The idea survived every gate: it is new compared to published research, no existing patent blocks it, and it passed the feasibility check. A provisional patent application draft has been generated — download it below.',
+    KILLED_SATURATED: 'The idea (and its pivoted variants) collides too much with patents that already exist — this area is already heavily patented, so filing would likely be rejected or blocked.',
+    KILLED_INFEASIBLE: 'The idea failed the feasibility check.'
   };
-  let text = summaries[ev.status] || '';
-  if (ev.kill_reason) text += ' ' + ev.kill_reason;
-  if (ev.lineage && ev.lineage.length > 1) {
-    text += ` The idea evolved through ${ev.lineage.length} versions during the run.`;
+  const parts = [summaries[ev.status] || ''];
+  if (lastDecision && lastDecision.summary) {
+    parts.push('Why: ' + lastDecision.summary);
+  } else if (ev.kill_reason) {
+    parts.push('Why: ' + ev.kill_reason);
   }
-  $('summary').textContent = text;
+  if (ev.lineage && ev.lineage.length > 1) {
+    parts.push(`The idea was reworked ${ev.lineage.length - 1} time(s) during the run trying to find patentable space.`);
+  }
+  $('summary').innerHTML = '';
+  parts.filter(Boolean).forEach(p => $('summary').appendChild(el('p', '', p)));
   const links = $('links');
   links.innerHTML = '';
   const files = ['report.md', 'prior_art.json', 'trace.json'];
@@ -488,6 +559,7 @@ $('go').addEventListener('click', async () => {
   $('timeline').innerHTML = '';
   currentIteration = null;
   cards = {};
+  lastDecision = null;
   resetAgents();
   try {
     const response = await fetch('/api/run', {

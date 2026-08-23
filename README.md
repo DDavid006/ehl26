@@ -73,12 +73,12 @@ while overlap stays ≥ 60, the run stops as `KILLED_SATURATED`.
   matching sentence as evidence. `uncovered` lists elements no retrieved patent covers, i.e.
   where the idea's potential novelty lives. Stored in `trace.json` / `prior_art.json` under
   `coverage_matrix` and rendered in `report.md` per iteration.
-- Cross-run memory (`patentloop/memory.py`): every run deposits the patents it retrieved into
-  `runs/memory.json` (with embeddings); a new run recalls the most similar records by embedding
-  cosine before searching live, and they enter the coverage matrix alongside live results. Each
-  recalled record carries `source_run_id` + `similarity` (in `trace.json` under `memory_hits`
-  and in `report.md` under "Recalled from earlier runs"), so runs provably build on each other —
-  delete `runs/memory.json` and re-run to see the difference.
+- In-run reasoning memory: each round records what idea was tried, its novelty/overlap scores,
+  why it was rejected, the blocking patents, and the pivot direction taken. The full history is
+  passed to the Expert Pivot Agent every round with an explicit instruction not to repeat or
+  rephrase any earlier direction, so successive pivots explore genuinely different mechanisms.
+  Stored in `trace.json` under `round_memory`. (`patentloop/memory.py` still provides an optional
+  cross-run patent store but it is no longer wired into the loop.)
 - Feasibility gate: the full chain of reasoning for both checks is logged verbatim in
   `iterations[i].feasibility_gate` and reproduced in `report.md` — never summarized away.
 - The final `report.md` contains the complete iteration trace: every idea version, every score,
