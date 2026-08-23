@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..llm import chat_json
-from ..sources import search_arxiv, search_github, search_semantic_scholar
+from ..sources import search_arxiv, search_github, search_products, search_semantic_scholar
 
 EXTRACT_SYSTEM = (
     "You are a patent analyst. Extract the 3-6 core technical elements of the idea. "
@@ -18,8 +18,10 @@ EXTRACT_SYSTEM = (
 
 SCORE_SYSTEM = (
     "You are a novelty examiner. You are given an idea, its core elements, and REAL retrieved "
-    "publications (title + abstract + url). Judge how novel the idea is relative ONLY to these "
-    "retrieved documents - never from memory. "
+    "documents (title + abstract + url): academic publications, code repositories, AND existing "
+    "commercial products/solutions found on the web (source 'web_product'). Judge how novel the "
+    "idea is relative ONLY to these retrieved documents - never from memory. An existing product "
+    "that already does what the idea describes counts against novelty just as much as a paper. "
     'Return JSON: {"novelty_score": <0-100, 100 = nothing retrieved resembles the idea>, '
     '"closest_prior_work": [{"title": "...", "url": "...", "why_similar": "..."}], '
     '"rationale": "<one paragraph citing the retrieved titles>"}'
@@ -45,6 +47,7 @@ def run_research(idea: str, extraction: dict[str, Any]) -> dict[str, Any]:
             "semantic_scholar": search_semantic_scholar(query),
             "arxiv": search_arxiv(query, limit=3),
             "github": search_github(query, limit=3),
+            "products": search_products(query, limit=3),
         }
 
     with ThreadPoolExecutor(max_workers=min(len(queries), 6)) as pool:
@@ -53,7 +56,7 @@ def run_research(idea: str, extraction: dict[str, Any]) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
     for bundle in per_query:
-        for source in ("semantic_scholar", "arxiv", "github"):
+        for source in ("semantic_scholar", "arxiv", "github", "products"):
             for record in bundle[source]["records"]:
                 key = record.get("url") or record.get("title") or ""
                 if key and key not in seen:
@@ -84,6 +87,7 @@ def run_research(idea: str, extraction: dict[str, Any]) -> dict[str, Any]:
                 "semantic_scholar": bundle["semantic_scholar"]["raw"],
                 "arxiv": bundle["arxiv"]["raw"],
                 "github": bundle["github"]["raw"],
+                "products": bundle["products"]["raw"],
             }
             for bundle in per_query
         ],

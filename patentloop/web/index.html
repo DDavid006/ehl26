@@ -309,8 +309,17 @@ function coverageTable(ev) {
   const { box, badge } = card('coverage', 'Coverage map — which patents cover which elements');
   setBadge(badge, ev.uncovered.length ? 'pass' : 'fail',
            ev.uncovered.length ? `${ev.uncovered.length} open` : 'all covered');
-  hint(box, 'Each row is one element of the idea; each column is a found patent. ✕ means that patent already discloses that element. Rows marked OPEN are the idea\u2019s free (potentially patentable) space.');
-  const patents = ev.patents.slice(0, 8);
+  hint(box, 'Each row is one element of the idea; columns are the 5 most damaging patents found — the ones covering the most of the idea. ✕ means that patent already discloses that element. Rows marked OPEN are the idea\u2019s free (potentially patentable) space.');
+  const coveredCount = p => ev.elements.reduce((n, element) => {
+    const cell = ((ev.coverage || {})[element.id] || {})[p.patent_id] || {};
+    return n + (cell.covered ? 1 : 0);
+  }, 0);
+  const patents = ev.patents
+    .map(p => [coveredCount(p), p])
+    .sort((a, b) => b[0] - a[0])
+    .filter(([n]) => n > 0)
+    .slice(0, 5)
+    .map(([, p]) => p);
   const scroll = el('div', 'matrix-scroll');
   const table = el('table', 'matrix');
   const headRow = el('tr');
@@ -383,8 +392,8 @@ function handle(ev) {
     }
     case 'research':
       setAgent('research', 'active');
-      cards.research = card('research', 'Step 2 · Search published research (Semantic Scholar · arXiv · GitHub)');
-      hint(cards.research.box, 'Looks for papers and code that already describe the idea, then scores how novel it still is.');
+      cards.research = card('research', 'Step 2 · Search research, code & existing products (Semantic Scholar · arXiv · GitHub · Web)');
+      hint(cards.research.box, 'Looks for papers, code, and existing commercial products that already describe or do what the idea does, then scores how novel it still is. An existing product counts against novelty just like a paper.');
       break;
     case 'research_done': {
       setAgent('research', 'done');
